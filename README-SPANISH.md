@@ -20,7 +20,7 @@ agy plugin install https://github.com/Robernetes/zotero-mcp
 - **Verificar fuentes**: nunca inventa referencias; todo item se valida contra Zotero antes de citar.
 - **Diagnosticar**: `zotero_status` indica si Zotero está disponible.
 
-**Límites (v1):** solo lectura sobre la librería de Zotero (no agrega/edita/borra items) y actualización de bibliografía solo en archivos Markdown (`.md`/`.markdown`), no Word.
+**Límites (v1):** solo lectura sobre la librería de Zotero (no agrega/edita/borra items).
 
 ## Requisitos
 
@@ -64,6 +64,9 @@ El servidor funciona sin configuración (usa los valores por defecto). Variables
 | `zotero_list_collections` | Lista las colecciones. |
 | `zotero_cite` | Cita textual (`key`, `style`, `locale`, `locator`, `label`, `prefix`, `suffix`, `register`). |
 | `zotero_bibliography` | Bibliografía desde el registro de citas o `keys` explícitas; con `filePath` + `apply: true` actualiza la sección de referencias de un `.md`. |
+| `zotero_read_docx` | Lee los párrafos de un `.docx` (índice, texto, si ya tiene campos Zotero). |
+| `zotero_insert_citation_docx` | Inserta un campo `ADDIN ZOTERO_ITEM CSL_CITATION` al final de un párrafo en un `.docx`. |
+| `zotero_update_bibliography_docx` | Inserta o actualiza el campo `ADDIN ZOTERO_BIBL` en un `.docx`. |
 
 ## Ejemplos de uso (JSON)
 
@@ -160,6 +163,39 @@ Si el documento no tiene sección de referencias, crearla al final con `createSe
 La bibliografía se mantiene actualizada sola: basta añadir la cita con `zotero_cite` y volver a
 llamar `zotero_bibliography`. Para revisar antes de escribir, omite `apply` (modo `dryRun` devuelve el diff).
 
+### 7. Leer estructura de un documento Word
+
+```json
+{ "tool": "zotero_read_docx", "args": { "filePath": "C:/docs/articulo.docx" } }
+```
+→ `{ paragraphs: [{ index: 0, text: "Lorem ipsum...", hasZoteroField: false }, ...] }`
+
+### 8. Insertar cita en Word (campo dinámico Zotero)
+
+```json
+{ "tool": "zotero_insert_citation_docx", "args": { "filePath": "C:/docs/articulo.docx", "key": "ABC12345", "paragraphIndex": 0, "style": "apa", "apply": true } }
+```
+
+Con localizador:
+
+```json
+{ "tool": "zotero_insert_citation_docx", "args": { "filePath": "C:/docs/articulo.docx", "key": "ABC12345", "paragraphIndex": 2, "locator": "15", "label": "page", "apply": true } }
+```
+
+### 9. Actualizar bibliografía en Word
+
+```json
+{ "tool": "zotero_update_bibliography_docx", "args": { "filePath": "C:/docs/articulo.docx", "style": "apa", "apply": true } }
+```
+
+La cita se inserta como campo `ADDIN ZOTERO_ITEM CSL_CITATION` con el CSL JSON del item. Al abrir el `.docx` en Word con el plugin de Zotero, la cita se renderiza correctamente y la bibliografía se actualiza sola.
+
+### Flujo típico en Word
+
+1. `zotero_read_docx` → conoce la estructura (párrafos y sus índices).
+2. Para cada cita: `zotero_insert_citation_docx` en el párrafo correcto.
+3. `zotero_update_bibliography_docx` → añade/actualiza el campo BIBL al final.
+
 ## Skill incluida
 
 `zotero-research` enseña al agente cuándo y cómo usar cada herramienta (búsqueda, citación y
@@ -175,7 +211,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 ## Seguridad
 
 - **Solo lectura** sobre la librería de Zotero: el MCP no agrega, edita ni borra items.
-- La única escritura es la **sección de referencias** de archivos Markdown, y solo con `apply: true` explícito.
+- La única escritura es la **sección de referencias** de archivos Markdown y los **campos Zotero** en archivos Word (.docx), y solo con `apply: true` explícito.
 - Sin secretos en el repositorio; las credenciales (si las hubiera) van por variables de entorno.
 - Validación de parámetros, timeout de conexión (8 s) y límite de tamaño de archivo (2 MB).
 

@@ -1,6 +1,6 @@
 ---
 name: zotero-research
-description: Busca en la biblioteca local de Zotero, genera citas en formato CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver) y mantiene actualizada la sección de bibliografía de documentos Markdown. Usar cuando el usuario pida buscar referencias, citar fuentes, o actualizar/crear la bibliografía de un documento.
+description: Busca en la biblioteca local de Zotero, genera citas en formato CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver) y mantiene actualizada la sección de bibliografía de documentos Markdown y Word. Usar cuando el usuario pida buscar referencias, citar fuentes, o actualizar/crear la bibliografía de un documento.
 ---
 
 # Investigación y citas con Zotero
@@ -24,10 +24,12 @@ Usa `zotero_get_item` con la `key` cuando necesites el detalle completo de un it
    - `key` (de Zotero),
    - `style` (ej. `apa`),
    - `locator` y `label` cuando la cita apunte a una página concreta (ej. `locator: "15"`, `label: "page"`).
-3. Inserta la cita devuelta en el texto donde corresponde.
+3. Insertar la cita depende del formato del documento:
+   - **Markdown:** la cita se inserta como texto en el flujo de edición.
+   - **Word (.docx):** usa `zotero_insert_citation_docx` (ver sección 5).
 4. Usa **siempre el mismo** `style` y `locale` para todo el documento; cambiar de estilo a mitad de documento reinicia la numeración.
 
-## 4. Mantener la bibliografía actualizada
+## 4. Mantener la bibliografía actualizada en Markdown
 
 La bibliografía se actualiza sola al añadir citas:
 
@@ -38,11 +40,44 @@ La bibliografía se actualiza sola al añadir citas:
 3. La sección de referencias se regenera a partir de las citas registradas. Si el documento aún no tiene sección, pasa `createSection: true` para crearla al final (por defecto `## Bibliografía`).
 4. Para revisar sin escribir, omite `apply` (actúa en modo `dryRun` y devuelve el diff).
 
+## 5. Trabajar con documentos Word (.docx)
+
+Para insertar citas y bibliografía en archivos Word, usa las herramientas específicas de docx. **No uses las herramientas de Markdown (zotero_cite textual, zotero_bibliography con filePath .md) en un .docx.**
+
+### Leer la estructura
+
+1. `zotero_read_docx { "filePath": "C:/docs/articulo.docx" }` → obtén la lista de párrafos con su índice y texto.
+2. Identifica en qué párrafo debe ir cada cita. Edge: las citas ya insertadas tienen `hasZoteroField: true`.
+
+### Insertar citas
+
+1. `zotero_insert_citation_docx` con:
+   - `filePath`, `key`, `paragraphIndex` (del paso anterior),
+   - `style`, `locale`, `locator`, `label`, `prefix`, `suffix`,
+   - `apply: true` para escribir el archivo (sin `apply` solo hace dryRun).
+2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` al final del párrafo indicado.
+3. El campo incluye el CSL JSON del item para que Zotero pueda renderizarlo sin conexión.
+4. `noteIndex` y `citationID` se asignan automáticamente por orden de inserción.
+
+### Actualizar la bibliografía
+
+1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath`, `style` y `apply: true`.
+2. Inserta (o actualiza si ya existe) el campo `ADDIN ZOTERO_BIBL` al final del documento.
+
+### Flujo típico en Word
+
+1. `zotero_read_docx` → conocer la estructura.
+2. `zotero_insert_citation_docx` para cada cita (una por párrafo).
+3. `zotero_update_bibliography_docx` → campo BIBL al final.
+
+Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan correctamente y la bibliografía se actualiza automáticamente.
+
 ## Reglas
 
 - No inventes citas ni referencias: verifica siempre con `zotero_search` / `zotero_get_item` que el item exista.
 - No modifiques la librería de Zotero: el MCP solo lee.
 - No cambies el estilo de citación a mitad de documento.
 - Respeta el idioma del documento (`locale: es-ES` para documentos en español).
+- En documentos Word, no uses las herramientas de Markdown (zotero_cite textual en el .docx) — usa las de docx.
 - No expongas credenciales ni rutas absolutas del sistema.
 - Si Zotero no está corriendo, `zotero_status` devolverá `ok: false`; indícalo al usuario y pídele que abra Zotero.
