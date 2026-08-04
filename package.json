@@ -1,0 +1,27 @@
+{
+  "name": "zotero-mcp",
+  "version": "0.1.0",
+  "description": "Servidor MCP para la biblioteca local de Zotero: búsqueda, citas y bibliografías actualizadas.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "zotero",
+    "mcp",
+    "citas",
+    "bibliografía",
+    "antigravity"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "citeproc": "^2.0.0",
+    "zod": "^3.23.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "node",
+      "args": ["./src/server.js"],
+      "env": {
+        "ZOTERO_API_URL": "${ZOTERO_API_URL}",
+        "ZOTERO_DEFAULT_STYLE": "${ZOTERO_DEFAULT_STYLE}",
+        "ZOTERO_LOCALE": "${ZOTERO_LOCALE}"
+      }
+    }
+  }
+}

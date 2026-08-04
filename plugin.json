@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "zotero-mcp",
+  "description": "Herramientas MCP para buscar en la biblioteca local de Zotero, generar citas y mantener bibliografías actualizadas."
+}
