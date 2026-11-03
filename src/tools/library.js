@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { ok, run } from './shared.js';
 
 /** @param {import('@modelcontextprotocol/sdk/server/mcp.js').McpServer} server @param {import('../context.js').ToolContext} ctx */
-export function registerLibraryTools(server, { zotero }) {
+export function registerLibraryTools(server, { zotero, workspace }) {
   // ---------------------------------------------------------------------------
   // zotero_status
   // ---------------------------------------------------------------------------
@@ -14,12 +14,13 @@ export function registerLibraryTools(server, { zotero }) {
     'zotero_status',
     {
       description:
-        'Verifica la conexión con la API local de Zotero (puerto 23119). Úsala primero para diagnosticar si Zotero está disponible.',
+        'Verifica la conexión con la API local de Zotero (puerto 23119). Úsala primero para diagnosticar si Zotero está disponible. ' +
+        'Indica también en workspace las carpetas donde se pueden leer y escribir documentos .md/.docx.',
       inputSchema: {},
     },
     async () => run(async () => {
       const status = await zotero.status();
-      return ok(status);
+      return ok({ ...status, workspace: await workspace.describe() });
     })
   );
 

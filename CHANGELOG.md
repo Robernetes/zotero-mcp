@@ -4,6 +4,17 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el proyecto usa
 [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Seguridad
+
+- Los documentos `.md` y `.docx` solo se leen y escriben dentro de las carpetas
+  permitidas: las de la nueva variable `ZOTERO_MCP_ALLOWED_DIRS`; si no está, las
+  carpetas de trabajo que indica el cliente MCP (*roots*, actualizadas cuando
+  cambian); y si no indica ninguna, la carpeta de arranque del servidor. Se
+  rechazan los enlaces que apuntan fuera y las rutas relativas se resuelven desde la
+  carpeta de trabajo. `zotero_status` muestra las carpetas permitidas en `workspace`.
+
 ## [0.2.0] - 2026-11-03
 
 ### Añadido
@@ -72,5 +83,6 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
   `zotero_update_bibliography_docx`.
 - Skill `zotero-research`.
 
+[Sin publicar]: https://github.com/Robernetes/zotero-mcp/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/Robernetes/zotero-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Robernetes/zotero-mcp/releases/tag/v0.1.0
