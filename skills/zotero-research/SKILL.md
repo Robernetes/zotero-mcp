@@ -38,7 +38,8 @@ La bibliografía se actualiza sola al añadir citas:
    - `filePath` = ruta del documento Markdown, y
    - `apply: true` para escribir el archivo.
 3. La sección de referencias se regenera a partir de las citas registradas. Si el documento aún no tiene sección, pasa `createSection: true` para crearla al final (por defecto `## Bibliografía`).
-4. Para revisar sin escribir, omite `apply` (actúa en modo `dryRun` y devuelve el diff).
+4. Para revisar sin escribir, omite `apply` (actúa en modo `dryRun` y devuelve el diff del documento completo).
+5. El registro de citas vive en memoria y se pierde si el servidor se reinicia. Con el registro vacío no se escribe nada; si la nueva bibliografía tiene menos referencias que la sección actual, la herramienta se niega a escribir salvo con `force: true`. Ante cualquiera de los dos avisos, vuelve a citar con `zotero_cite` (o usa `keys`) en lugar de forzar.
 
 ## 5. Trabajar con documentos Word (.docx)
 

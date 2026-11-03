@@ -223,7 +223,9 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 | `zotero_cite` → "No se encontró un item con key..." | Key mal copiada o item borrado | Vuelve a buscarlo con `zotero_search` y copia la `key` exacta. |
 | `zotero_bibliography` → "Estilo no soportado" | Estilo no incluido | Usa uno de: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (o agrega el `.csl` en `src/csl/`). |
 | "No se encontró una sección de referencias" | El documento no tiene encabezado de bibliografía | Pasa `createSection: true` para crearla al final. |
-| "filePath debe ser un archivo .md..." | Se pasó `.docx` u otra extensión | v1 solo actualiza Markdown (`.md`/`.markdown`). |
+| "filePath debe ser un archivo .md..." | Se pasó `.docx` u otra extensión | `zotero_bibliography` solo actualiza Markdown (`.md`/`.markdown`); para Word usa `zotero_update_bibliography_docx`. |
+| "No hay referencias que escribir: el registro de citas está vacío" | Se perdió el registro en memoria (reinicio del servidor o cambio de style/locale) | Cita de nuevo con `zotero_cite` o pasa `keys` explícitas. El archivo no se modifica. |
+| "La nueva bibliografía tiene N referencias y la sección actual M" | La lista nueva es más corta que la existente (registro parcial) | Revisa el `diff` del dryRun y repite con `force: true` si de verdad quieres reemplazarla. |
 | Citas numéricas "reiniciadas" | Se cambió de estilo a mitad de documento | Usa el mismo `style`/`locale` en todo el documento (cambiar de estilo reinicia la numeración). |
 
 ## Desarrollo

@@ -223,7 +223,9 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 | `zotero_cite` → "Item not found with key..." | Wrong key or deleted item | Search again with `zotero_search` and copy the exact `key`. |
 | `zotero_bibliography` → "Unsupported style" | Style not included | Use one of: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (or add the `.csl` file to `src/csl/`). |
 | "No references section found" | Document has no bibliography heading | Pass `createSection: true` to create it at the end. |
-| "filePath must be a .md file..." | `.docx` or other extension was passed | v1 only updates Markdown (`.md`/`.markdown`). |
+| "filePath must be a .md file..." | `.docx` or other extension was passed | `zotero_bibliography` only updates Markdown (`.md`/`.markdown`); for Word use `zotero_update_bibliography_docx`. |
+| "No references to write: the citation registry is empty" | The in-memory registry was lost (server restart or style/locale change) | Cite again with `zotero_cite` or pass explicit `keys`. The file is not modified. |
+| "The new bibliography has N references and the current section M" | The new list is shorter than the existing one (partial registry) | Review the `diff` from the dry run and repeat with `force: true` if you really want to replace it. |
 | Numeric citations "reset" | Style changed mid-document | Use the same `style`/`locale` throughout the document (changing style resets numbering). |
 
 ## Development

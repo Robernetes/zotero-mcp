@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { ZoteroClient } from './zotero-client.js';
 import { CitationManager, AVAILABLE_STYLES, FORMATS, LOCALES } from './cite.js';
-import { extractBibliographySection, updateBibliographySection } from './bib-section.js';
+import { countReferenceEntries, extractBibliographySection, updateBibliographySection } from './bib-section.js';
 import {
   openDocx,
   saveDocx,
@@ -167,6 +167,7 @@ server.tool(
     dryRun: z.boolean().optional().describe('Solo mostrar el diff sin escribir (default true).'),
     apply: z.boolean().optional().describe('Escribir el archivo (requiere filePath; default false).'),
     createSection: z.boolean().optional().describe('Si el documento no tiene sección de referencias, crearla al final (default false).'),
+    force: z.boolean().optional().describe('Escribir aunque la nueva bibliografía tenga menos referencias que la sección actual (default false).'),
   },
   async (args) => run(async () => {
     const style = args.style || DEFAULT_STYLE;
@@ -189,7 +190,7 @@ server.tool(
     if (!['.md', '.markdown'].includes(ext)) {
       return fail(
         `filePath debe ser un archivo .md o .markdown (se recibió "${ext || '(sin extensión)'}"). ` +
-          'La actualización de documentos Word (.docx) no está soportada en v1.'
+          'Para documentos Word (.docx) usa zotero_update_bibliography_docx.'
       );
     }
     const abs = path.resolve(filePath);
@@ -198,8 +199,18 @@ server.tool(
     if (!st.isFile()) return fail(`La ruta no es un archivo: ${abs}`);
     if (st.size > MAX_FILE_BYTES) return fail('El archivo supera el límite de 2 MB; no se modifica.');
 
+    // Nunca reescribir la sección con una bibliografía vacía: suele significar
+    // que el registro de citas en memoria se perdió (p. ej. el servidor se reinició).
+    if (bib.count === 0) {
+      return fail(
+        'No hay referencias que escribir: el registro de citas está vacío (se pierde al reiniciar el servidor o al cambiar de style/locale). ' +
+          'Cita de nuevo con zotero_cite o pasa las keys explícitas en `keys`. No se modificó el archivo.'
+      );
+    }
+
     const original = readFileSync(abs, 'utf8');
     const oldSection = extractBibliographySection(original);
+    const oldEntries = countReferenceEntries(oldSection || '');
     const result = updateBibliographySection(original, bib.bibliography, {
       createSection: args.createSection === true,
     });
@@ -220,8 +231,23 @@ server.tool(
       apply: args.apply === true,
       dryRun: args.apply !== true,
       oldSection: oldSection || '',
-      diff: result.text === original ? null : simpleDiff(oldSection || '', bib.bibliography),
+      oldEntries,
+      newEntries: bib.count,
+      // Diff del documento completo (no solo de la sección), para que el dryRun
+      // muestre cualquier línea que se fuera a perder fuera de las referencias.
+      diff: result.text === original ? null : simpleDiff(original, result.text),
     };
+
+    // Una bibliografía con menos referencias que la actual probablemente viene de
+    // un registro parcial; solo se escribe si se pide explícitamente con force.
+    if (bib.count < oldEntries && args.force !== true) {
+      payload.warning =
+        `La nueva bibliografía tiene ${bib.count} referencias y la sección actual ${oldEntries}. ` +
+        'Revisa el diff y repite con force: true si quieres reemplazarla.';
+      if (args.apply === true) {
+        return fail(`${payload.warning} No se modificó el archivo.`);
+      }
+    }
 
     if (args.apply === true && result.text !== original) {
       writeFileSync(abs, result.text, 'utf8');
@@ -428,12 +454,16 @@ main().catch((err) => {
   process.exit(1);
 });
 
-/** Diff simplificado: primeras líneas añadidas/removidas. */
+/** Diff simplificado: primeras líneas añadidas/removidas (y sus totales). */
 function simpleDiff(oldText, newText) {
-  const oldLines = oldText.split('\n').filter((l) => l.trim());
-  const newLines = newText.split('\n').filter((l) => l.trim());
+  const oldLines = oldText.split(/\r?\n/).filter((l) => l.trim());
+  const newLines = newText.split(/\r?\n/).filter((l) => l.trim());
+  const added = newLines.filter((l) => !oldLines.includes(l));
+  const removed = oldLines.filter((l) => !newLines.includes(l));
   return {
-    added: newLines.filter((l) => !oldLines.includes(l)).slice(0, 10),
-    removed: oldLines.filter((l) => !newLines.includes(l)).slice(0, 10),
+    addedCount: added.length,
+    removedCount: removed.length,
+    added: added.slice(0, 10),
+    removed: removed.slice(0, 10),
   };
 }
