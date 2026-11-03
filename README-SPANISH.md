@@ -59,8 +59,11 @@ El servidor funciona sin configuración (usa los valores por defecto). Variables
 | `ZOTERO_MCP_BACKUP` | `true` | Copiar el documento a `<archivo>.bak` antes de sobrescribirlo (`false` para desactivarlo) |
 | `OPENALEX_API_KEY` | (vacío) | [API key gratuita de OpenAlex](https://openalex.org/settings/api) para `zotero_find_external`. Sin ella, la cuota diaria gratuita se comparte con todos los de tu IP; si se agota, la búsqueda pasa a Crossref |
 | `ZOTERO_MCP_CONTACT_EMAIL` | (vacío) | Correo de contacto que se envía a OpenAlex y Crossref (su "polite pool": respuestas más rápidas y estables). Si está vacío no se envía nada |
+| `ZOTERO_MCP_ALLOWED_DIRS` | (vacío) | Carpetas donde se pueden leer y escribir documentos `.md`/`.docx`, separadas por `;` en Windows (`:` en Linux/macOS). Si está vacío, se usan las carpetas de trabajo del cliente MCP (*roots*) o, si no las indica, la carpeta desde la que arrancó el servidor |
 
 Las escrituras en `.md`/`.docx` son atómicas (archivo temporal en la misma carpeta + renombrado), se rechazan si el archivo cambió en disco desde que se leyó y se serializan por archivo, de modo que las llamadas en paralelo no se pisan. El `.bak` conserva solo la versión anterior.
+
+Los documentos solo se leen y escriben dentro de las **carpetas permitidas**: las de `ZOTERO_MCP_ALLOWED_DIRS`; si no está definida, las carpetas de trabajo que indica el cliente MCP (*roots*, normalmente el proyecto abierto); y si el cliente no indica ninguna, la carpeta desde la que arrancó el servidor. Las rutas relativas se resuelven desde la primera carpeta permitida y se rechazan los enlaces (symlinks/junctions) que apunten fuera. `zotero_status` muestra las carpetas permitidas en `workspace`; si `source` es la carpeta de arranque del servidor, tu cliente no indica roots y necesitas `ZOTERO_MCP_ALLOWED_DIRS` para trabajar con documentos en otras carpetas.
 
 ## Herramientas MCP
 
@@ -244,6 +247,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 - `zotero_find_external` solo envía a OpenAlex/Crossref el texto buscado o el DOI (y `OPENALEX_API_KEY` y `ZOTERO_MCP_CONTACT_EMAIL` si los configuras); nunca el contenido de tus documentos ni de tu biblioteca.
 - La única escritura es la **sección de referencias** de archivos Markdown y los **campos Zotero** en archivos Word (.docx), y solo con `apply: true` explícito.
 - Sin secretos en el repositorio; las credenciales (si las hubiera) van por variables de entorno.
+- Los documentos solo se leen y escriben dentro de las carpetas permitidas (`ZOTERO_MCP_ALLOWED_DIRS`, los roots del cliente o la carpeta de arranque del servidor).
 - Validación de parámetros, timeout de conexión (8 s) y límite de tamaño de archivo (2 MB).
 
 ## Solución de problemas
@@ -259,6 +263,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 | "El archivo cambió desde que se leyó" | El documento se editó o guardó mientras se ejecutaba la herramienta | Vuelve a ejecutar la herramienta para trabajar sobre la versión más reciente. |
 | "No hay referencias que escribir: el registro de citas está vacío" | Se perdió el registro en memoria (reinicio del servidor o cambio de style/locale) | Cita de nuevo con `zotero_cite` o pasa `keys` explícitas. El archivo no se modifica. |
 | "La nueva bibliografía tiene N referencias y la sección actual M" | La lista nueva es más corta que la existente (registro parcial) | Revisa el `diff` del dryRun y repite con `force: true` si de verdad quieres reemplazarla. |
+| "... está fuera de las carpetas permitidas" | El documento no está en la carpeta de trabajo (o tu cliente no indica roots) | Revisa `workspace` en `zotero_status` y añade la carpeta del documento a `ZOTERO_MCP_ALLOWED_DIRS`. |
 | `zotero_add_item` → "No se pudo conectar con Zotero" | Zotero está cerrado | Abre Zotero: guardar requiere la aplicación de escritorio. |
 | `zotero_add_item` → "Hay N colecciones llamadas ..." | Dos colecciones con el mismo nombre y padre | Renombra una en Zotero, o selecciona la colección en Zotero y guarda sin `collectionKey`. |
 | `zotero_find_external` → "OpenAlex: HTTP 429, cuota diaria gratuita agotada" | Se agotó la cuota compartida de OpenAlex de tu IP | Con `source: "auto"` ya pasa a Crossref; para tener cuota propia configura `OPENALEX_API_KEY`. |

@@ -19,14 +19,15 @@ import {
   ensureDocumentPrefs,
   hasParagraphStyle,
   randomId,
-  validateDocxPath,
 } from '../docx.js';
 import { fail, ok, run } from './shared.js';
 
 const CITATION_ITEM_FIELDS = ['locator', 'label', 'prefix', 'suffix'];
+const DOCX = { extensions: ['.docx'] };
+const PATH_HINT_DOCX = 'Ruta del archivo .docx, dentro de la carpeta de trabajo (las rutas relativas se resuelven desde ella).';
 
 /** @param {import('@modelcontextprotocol/sdk/server/mcp.js').McpServer} server @param {import('../context.js').ToolContext} ctx */
-export function registerWordTools(server, { zotero, citationManager, config }) {
+export function registerWordTools(server, { zotero, citationManager, config, workspace }) {
   const { defaultStyle, defaultLocale, backup } = config;
 
   /**
@@ -102,11 +103,11 @@ export function registerWordTools(server, { zotero, citationManager, config }) {
       description:
         'Lee los párrafos de un documento Word (.docx). Usa esta herramienta primero para conocer la estructura del documento antes de insertar citas. Devuelve el índice, texto y si cada párrafo ya contiene campos Zotero.',
       inputSchema: {
-        filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
+        filePath: z.string().min(1).describe(PATH_HINT_DOCX),
       },
     },
     async (args) => run(async () => {
-      const abs = validateDocxPath(args.filePath);
+      const abs = await workspace.resolve(args.filePath, DOCX);
       const ctx = await openDocx(abs);
       const paragraphs = readParagraphs(ctx);
       return ok({ filePath: abs, count: paragraphs.length, paragraphs });
@@ -122,7 +123,7 @@ export function registerWordTools(server, { zotero, citationManager, config }) {
       description:
         'Inserta un campo de cita Zotero (ADDIN ZOTERO_ITEM CSL_CITATION) al final del párrafo indicado en un documento Word. El texto de la cita (numeración, desambiguación) se calcula con las citas que ya contiene el documento, no con las de zotero_cite. La cita se renderizará correctamente al abrir el archivo en Word con el plugin de Zotero. Usa siempre el mismo style y locale en todo el documento.',
       inputSchema: {
-        filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
+        filePath: z.string().min(1).describe(PATH_HINT_DOCX),
         key: z.string().min(1).describe('Key del item de Zotero.'),
         paragraphIndex: z.number().int().min(0).describe('Índice del párrafo donde insertar la cita (0‑based). Usa zotero_read_docx para ver los índices.'),
         style: z.string().optional().describe(`Estilo CSL. Default: el configurado en el documento por Zotero, o ${defaultStyle}.`),
@@ -136,7 +137,7 @@ export function registerWordTools(server, { zotero, citationManager, config }) {
       },
     },
     async (args) => run(async () => {
-      const abs = validateDocxPath(args.filePath);
+      const abs = await workspace.resolve(args.filePath, DOCX);
       const key = String(args.key).trim();
 
       // Obtener el CSL JSON desde Zotero (con el id normalizado a key corta).
@@ -250,7 +251,7 @@ export function registerWordTools(server, { zotero, citationManager, config }) {
       description:
         'Inserta o actualiza el campo de bibliografía Zotero (ADDIN ZOTERO_BIBL) en un documento Word, al final del documento. Las referencias se generan desde los campos de cita Zotero que ya contiene el propio documento (los insertados con zotero_insert_citation_docx o con el plugin de Word). Al abrir el archivo en Word con el plugin de Zotero, la bibliografía se renderiza con el estilo configurado.',
       inputSchema: {
-        filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
+        filePath: z.string().min(1).describe(PATH_HINT_DOCX),
         style: z.string().optional().describe(`Estilo CSL. Default: el configurado en el documento por Zotero, o ${defaultStyle}.`),
         locale: z.string().optional().describe(`Idioma. Default: el configurado en el documento por Zotero, o ${defaultLocale}.`),
         dryRun: z.boolean().optional().describe('Solo mostrar lo que cambiaría (default true).'),
@@ -258,7 +259,7 @@ export function registerWordTools(server, { zotero, citationManager, config }) {
       },
     },
     async (args) => run(async () => {
-      const abs = validateDocxPath(args.filePath);
+      const abs = await workspace.resolve(args.filePath, DOCX);
 
       return withFileLock(abs, async () => {
         const ctx = await openDocx(abs);

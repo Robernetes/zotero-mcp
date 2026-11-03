@@ -89,6 +89,7 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 
 ### Escritura segura
 
+- Solo se pueden leer y escribir documentos dentro de las carpetas permitidas (`workspace` en `zotero_status`), normalmente la carpeta de trabajo. Las rutas relativas se resuelven desde ella. Si un documento está "fuera de las carpetas permitidas", díselo al usuario y explica que puede añadir su carpeta a `ZOTERO_MCP_ALLOWED_DIRS`; no copies ni muevas el documento por tu cuenta.
 - Pide al usuario que **cierre el documento en Word** antes de escribir con `apply: true`: si está abierto, la herramienta falla con "el archivo está abierto o bloqueado" y no modifica nada.
 - Si la herramienta responde "El archivo cambió desde que se leyó", vuelve a ejecutarla (no hay que forzar nada).
 - Antes de sobrescribir se guarda `<archivo>.bak` con la versión anterior (salvo `ZOTERO_MCP_BACKUP=false`); la ruta aparece en `backupPath`.

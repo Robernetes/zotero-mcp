@@ -6,6 +6,7 @@ import { ExternalSearch } from './external-search.js';
 import { ZoteroConnector } from './zotero-connector.js';
 import { CitationManager } from './cite.js';
 import { envFlag } from './file-io.js';
+import { Workspace, parseAllowedDirs } from './workspace.js';
 
 /**
  * @typedef {object} ToolContext
@@ -14,6 +15,7 @@ import { envFlag } from './file-io.js';
  * @property {ZoteroConnector} zoteroConnector     Servidor del conector (guardar items).
  * @property {ExternalSearch} externalSearch       OpenAlex / Crossref.
  * @property {CitationManager} citationManager     Motor de citas y registro en memoria.
+ * @property {Workspace} workspace                 Carpetas donde se pueden leer y escribir documentos.
  */
 
 /** Lee la configuración de las variables de entorno. */
@@ -24,6 +26,9 @@ export function loadConfig(env = process.env) {
     defaultLocale: (env.ZOTERO_LOCALE || 'es-ES').trim(),
     // Copia <archivo>.bak antes de sobrescribir un documento (default: sí).
     backup: envFlag(env.ZOTERO_MCP_BACKUP, true),
+    // Carpetas donde se pueden leer y escribir documentos; si no se indican, las
+    // carpetas de trabajo del cliente MCP (roots) o la carpeta de arranque.
+    allowedDirs: parseAllowedDirs(env.ZOTERO_MCP_ALLOWED_DIRS),
     // Búsqueda externa: OPENALEX_API_KEY (opcional) da cuota propia en OpenAlex;
     // ZOTERO_MCP_CONTACT_EMAIL (opcional) se envía a OpenAlex/Crossref como contacto.
     openAlexKey: env.OPENALEX_API_KEY,
@@ -44,5 +49,6 @@ export function createContext(config = loadConfig()) {
     zoteroConnector: ZoteroConnector.fromApiUrl(config.apiUrl),
     externalSearch: new ExternalSearch({ openAlexKey: config.openAlexKey, contactEmail: config.contactEmail }),
     citationManager: new CitationManager({ fetchItems: async (keys) => zotero.getByKeys(keys) }),
+    workspace: new Workspace({ allowedDirs: config.allowedDirs || [] }),
   };
 }

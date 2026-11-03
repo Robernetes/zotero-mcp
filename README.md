@@ -59,8 +59,11 @@ The server works out of the box (default values). Optional variables
 | `ZOTERO_MCP_BACKUP` | `true` | Copy the document to `<file>.bak` before overwriting it (`false` to disable) |
 | `OPENALEX_API_KEY` | (empty) | Free [OpenAlex API key](https://openalex.org/settings/api) for `zotero_find_external`. Without it, the free daily quota is shared by everyone on your IP; when it runs out, the search falls back to Crossref |
 | `ZOTERO_MCP_CONTACT_EMAIL` | (empty) | Contact email sent to OpenAlex and Crossref (their "polite pool": faster, more stable responses). Nothing is sent if empty |
+| `ZOTERO_MCP_ALLOWED_DIRS` | (empty) | Folders where `.md`/`.docx` documents can be read and written, separated by `;` on Windows (`:` on Linux/macOS). If empty, the MCP client's working folders (*roots*) are used, or else the folder the server was started from |
 
 Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + rename), are refused if the file changed on disk since it was read, and are serialized per file, so parallel calls do not overwrite each other. The `.bak` keeps only the previous version.
+
+Documents are only read and written inside the **allowed folders**: those in `ZOTERO_MCP_ALLOWED_DIRS`; if it is not set, the working folders the MCP client reports (*roots*, usually the open project); and if the client reports none, the folder the server was started from. Relative paths are resolved from the first allowed folder, and links (symlinks/junctions) pointing outside are rejected. `zotero_status` shows the allowed folders in `workspace`; if `source` is the server start folder, your client does not report roots and you need `ZOTERO_MCP_ALLOWED_DIRS` to work with documents elsewhere.
 
 ## MCP Tools
 
@@ -244,6 +247,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 - `zotero_find_external` only sends the search text or DOI to OpenAlex/Crossref (plus `OPENALEX_API_KEY` and `ZOTERO_MCP_CONTACT_EMAIL` if you set them); never the content of your documents or library.
 - The only write operations are the **references section** of Markdown files and **Zotero fields** in Word files (.docx), and only with explicit `apply: true`.
 - No secrets in the repository; credentials (if any) go through environment variables.
+- Documents are only read and written inside the allowed folders (`ZOTERO_MCP_ALLOWED_DIRS`, the client's roots or the server start folder).
 - Parameter validation, connection timeout (8 s) and file size limit (2 MB).
 
 ## Troubleshooting
@@ -260,6 +264,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 | "No references to write: the citation registry is empty" | The in-memory registry was lost (server restart or style/locale change) | Cite again with `zotero_cite` or pass explicit `keys`. The file is not modified. |
 | "The new bibliography has N references and the current section M" | The new list is shorter than the existing one (partial registry) | Review the `diff` from the dry run and repeat with `force: true` if you really want to replace it. |
 | `zotero_find_external` → "OpenAlex: HTTP 429, free daily quota used up" | The shared OpenAlex quota for your IP ran out | With `source: "auto"` it already falls back to Crossref; for your own quota set `OPENALEX_API_KEY`. |
+| "... is outside the allowed folders" | The document is not in the working folder (or your client does not report roots) | Check `workspace` in `zotero_status` and add the document's folder to `ZOTERO_MCP_ALLOWED_DIRS`. |
 | `zotero_add_item` → "Could not connect to Zotero" | Zotero is closed | Open Zotero: saving requires the desktop app. |
 | `zotero_add_item` → "There are N collections named ..." | Two collections with the same name and parent | Rename one in Zotero, or save without `collectionKey` after selecting the collection in Zotero. |
 | Numeric citations "reset" | Style changed mid-document | Use the same `style`/`locale` throughout the document (changing style resets numbering). |
