@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CitationManager, STYLES_DIR, LOCALES_DIR } from '../src/cite.js';
+import {
+  CitationManager,
+  STYLES_DIR,
+  LOCALES_DIR,
+  resolveStyleName,
+  zoteroStyleId,
+  styleNameFromZoteroId,
+} from '../src/cite.js';
 
 const ITEMS = [
   {
@@ -236,4 +243,22 @@ test('renderCitation desambigua con las citas del documento y avisa si faltan da
     () => manager.renderCitation({ items: [], citationItems: [{ id: 'NOPE' }] }),
     /Faltan los datos de los items: NOPE/
   );
+});
+
+test('resolveStyleName, zoteroStyleId y styleNameFromZoteroId normalizan estilos', () => {
+  assert.equal(resolveStyleName('APA'), 'apa');
+  assert.equal(resolveStyleName(' harvard '), 'harvard-cite-them-right');
+  assert.throws(() => resolveStyleName('nature'), /Estilo no soportado/);
+  assert.equal(zoteroStyleId('harvard'), 'http://www.zotero.org/styles/harvard-cite-them-right');
+  assert.equal(zoteroStyleId('IEEE'), 'http://www.zotero.org/styles/ieee');
+  assert.equal(styleNameFromZoteroId('http://www.zotero.org/styles/ieee'), 'ieee');
+  assert.equal(styleNameFromZoteroId('https://zotero.org/styles/apa/'), 'apa');
+  assert.equal(styleNameFromZoteroId('http://www.zotero.org/styles/nature'), null);
+  assert.equal(styleNameFromZoteroId(null), null);
+});
+
+test('la bibliografía numérica separa el número de la referencia', async () => {
+  const manager = makeManager();
+  const bib = await manager.bibliography({ keys: ['AAA1'], style: 'ieee', locale: 'en-US', format: 'plaintext' });
+  assert.ok(bib.entries[0].startsWith('[1] J. Smith'), bib.entries[0]);
 });
