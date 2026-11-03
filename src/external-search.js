@@ -4,11 +4,12 @@
 // Solo lectura: no guarda nada en Zotero.
 
 import { normalizeDoi } from './zotero-client.js';
+import { NAME, VERSION } from './version.js';
 
 export const SOURCES = ['auto', 'openalex', 'crossref'];
 export const OPENALEX_URL = 'https://api.openalex.org';
 export const CROSSREF_URL = 'https://api.crossref.org';
-const USER_AGENT = 'zotero-mcp/0.1.0 (https://github.com/Robernetes/zotero-mcp)';
+const USER_AGENT = `${NAME}/${VERSION} (https://github.com/Robernetes/zotero-mcp)`;
 const MAX_AUTHORS = 10;
 const ABSTRACT_CHARS = 600;
 

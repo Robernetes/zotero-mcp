@@ -1,6 +1,6 @@
 {
   "name": "zotero-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Servidor MCP para la biblioteca local de Zotero: búsqueda, citas y bibliografías actualizadas.",
   "type": "module",
   "main": "src/server.js",

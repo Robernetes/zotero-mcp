@@ -73,6 +73,9 @@ test('el servidor registra las 11 herramientas', async () => {
   const { client, close } = await connect(fakeContext());
   try {
     assert.deepEqual(client.getServerVersion(), SERVER_INFO);
+    // La versión publicada es la de package.json.
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.deepEqual(SERVER_INFO, { name: pkg.name, version: pkg.version });
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name), [
       'zotero_status',
