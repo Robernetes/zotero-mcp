@@ -136,11 +136,19 @@ function clampInt(value, min, max, fallback) {
   return Math.min(Math.max(n, min), max);
 }
 
-/** Reduce el id CSL a la key corta de Zotero si viene como URI completa. */
+/**
+ * Reduce el id CSL a la key corta de Zotero si viene como URI completa.
+ * La URI original (p. ej. http://zotero.org/users/14187389/items/KEY) se
+ * conserva en `zoteroURI`, no enumerable para que no acabe en el CSL JSON
+ * que se incrusta en los documentos.
+ */
 function normalizeCslId(item) {
   if (item && typeof item.id === 'string') {
     const m = item.id.match(/\/items\/([A-Z0-9]{8})$/i);
-    if (m) item.id = m[1];
+    if (m) {
+      Object.defineProperty(item, 'zoteroURI', { value: item.id, enumerable: false });
+      item.id = m[1];
+    }
   }
   return item;
 }

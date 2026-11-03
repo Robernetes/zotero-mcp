@@ -117,6 +117,11 @@ test('getByKeys usa format=csljson y normaliza el id a la key corta', async () =
     assert.equal(items.length, 2);
     assert.equal(items[0].id, 'KEY12345');
     assert.equal(items[1].id, 'KEY23456');
+    // La URI original se conserva para los campos de Word, pero no se serializa.
+    assert.equal(items[0].zoteroURI, 'http://zotero.org/users/21189841/items/KEY12345');
+    assert.equal(items[1].zoteroURI, undefined);
+    assert.ok(!JSON.stringify(items[0]).includes('zoteroURI'));
+    assert.equal({ ...items[0] }.zoteroURI, undefined);
   } finally {
     restore();
   }

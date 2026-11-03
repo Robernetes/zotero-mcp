@@ -69,7 +69,7 @@ Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + re
 | `zotero_bibliography` | Bibliography from registered citations or explicit `keys`; with `filePath` + `apply: true` updates the references section of a `.md` file. |
 | `zotero_read_docx` | Read paragraphs from a `.docx` (index, text, whether it already has Zotero fields). |
 | `zotero_insert_citation_docx` | Insert an `ADDIN ZOTERO_ITEM CSL_CITATION` field at the end of a paragraph in a `.docx`. |
-| `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx`. |
+| `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx` (one paragraph per reference). |
 
 ## Usage examples (JSON)
 
@@ -191,7 +191,9 @@ With locator:
 { "tool": "zotero_update_bibliography_docx", "args": { "filePath": "C:/docs/paper.docx", "style": "apa", "apply": true } }
 ```
 
-The citation is inserted as an `ADDIN ZOTERO_ITEM CSL_CITATION` field with the item's CSL JSON. When the `.docx` is opened in Word with the Zotero plugin, the citation renders correctly and the bibliography updates automatically.
+The citation is inserted as an `ADDIN ZOTERO_ITEM CSL_CITATION` field with the item's CSL JSON, in the same format the Zotero Word plugin writes (the item's real library URI, random `citationID`, `noteIndex` 0), so pressing *Refresh* in Word links it to the item in your library.
+
+`style` and `locale` are optional: if the document already has Zotero document preferences, its style and locale are used. If it has none, they are created (`docProps/custom.xml`, `ZOTERO_PREF_n`) with the style and locale used, so Word does not ask for a style on Refresh. Existing preferences are never modified; if you pass a different `style`, the response includes a warning because Zotero will use the document's style when refreshing.
 
 ### Typical Word flow
 

@@ -20,8 +20,10 @@ import {
   insertCitationAtParagraph,
   findBibliographyField,
   upsertBibliography,
-  buildBibliographyParagraph,
-  hashCode,
+  buildBibliographyParagraphs,
+  readDocumentPrefs,
+  ensureDocumentPrefs,
+  buildDocxBuffer,
 } from '../src/docx.js';
 
 const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
@@ -192,6 +194,7 @@ test('buildCitationRuns produce runs con el JSON correcto', () => {
 
   const instr = xml.match(/<w:instrText xml:space="preserve">([^<]*)<\/w:instrText>/)[1];
   assert.ok(instr.startsWith(' ADDIN ZOTERO_ITEM CSL_CITATION '));
+  assert.ok(instr.endsWith('} '), 'el código termina con espacio, como el del plugin');
   const json = JSON.parse(instr.replace(' ADDIN ZOTERO_ITEM CSL_CITATION ', ''));
   assert.equal(json.citationID, 'CITE-1');
   assert.equal(json.properties.noteIndex, 1);
@@ -199,6 +202,7 @@ test('buildCitationRuns produce runs con el JSON correcto', () => {
   assert.equal(json.citationItems[0].locator, '42');
   assert.equal(json.citationItems[0].uris[0], 'http://zotero.org/users/0/items/ABC12345');
   assert.equal(json.citationItems[0].itemData.id, 12345);
+  assert.equal(json.schema, 'https://github.com/citation-style-language/schema/raw/master/csl-citation.json');
 });
 
 test('insertCitationAtParagraph lanza si el índice no existe', async () => {
@@ -225,14 +229,14 @@ test('findBibliographyField encuentra o no el campo BIBL', async () => {
 test('upsertBibliography añade antes de w:sectPr y luego reemplaza', async () => {
   const ctx = await load(BASIC_DOC);
 
-  const res = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/apa', 'Smith, J. (2020).');
+  const res = upsertBibliography(ctx.doc, ['Smith, J. (2020).']);
   assert.equal(res.added, true);
   assert.equal(res.paragraphIndex, 2);
   let xml = serializeDocument(ctx.doc);
   assert.ok(xml.indexOf('ADDIN ZOTERO_BIBL') < xml.indexOf('<w:sectPr>'), 'la bibliografía debe ir antes de w:sectPr');
   assert.ok(findBibliographyField(ctx.doc));
 
-  const res2 = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/mla', 'New Bib');
+  const res2 = upsertBibliography(ctx.doc, ['New Bib']);
   assert.equal(res2.replaced, true);
   xml = serializeDocument(ctx.doc);
   assert.equal(xml.match(/ADDIN ZOTERO_BIBL/g).length, 1);
@@ -252,12 +256,17 @@ test('upsertBibliography reemplaza una bibliografía que abarca varios párrafos
         SECT
     )
   );
-  const res = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/apa', 'Nueva');
+  const res = upsertBibliography(ctx.doc, ['Nueva 1', 'Nueva 2', 'Nueva 3'], { pStyle: 'Bibliography' });
   assert.equal(res.replaced, true);
   assert.deepEqual(
     readParagraphs(ctx).map((p) => p.text),
-    ['Texto.', 'Nueva', 'Anexo']
+    ['Texto.', 'Nueva 1', 'Nueva 2', 'Nueva 3', 'Anexo']
   );
+  // El campo sigue siendo uno solo y abarca los tres párrafos.
+  const field = findBibliographyField(ctx.doc);
+  assert.equal(field.paragraphIndex, 1);
+  assert.equal(field.endParagraphIndex, 3);
+  assert.equal(serializeDocument(ctx.doc).match(/w:pStyle w:val="Bibliography"/g).length, 3);
 });
 
 test('countExistingCitations y countMaxId leen campos partidos en varios instrText', async () => {
@@ -280,14 +289,18 @@ test('countExistingCitations y countMaxId leen campos partidos en varios instrTe
   ]);
 });
 
-test('buildBibliographyParagraph construye el campo correcto', () => {
-  const p = buildBibliographyParagraph('http://www.zotero.org/styles/apa', 'Smith, J. (2020).');
-  const xml = serializeDocument([{ 'w:document': [{ 'w:body': [p] }] }]);
+test('buildBibliographyParagraphs usa el formato del plugin: un párrafo por referencia', () => {
+  const ps = buildBibliographyParagraphs(['Smith, J. (2020).', 'García, A. (2019).']);
+  assert.equal(ps.length, 2);
+  const xml = serializeDocument([{ 'w:document': [{ 'w:body': ps }] }]);
   const instr = xml.match(/<w:instrText xml:space="preserve">([^<]*)<\/w:instrText>/)[1];
-  assert.ok(instr.startsWith(' ADDIN ZOTERO_BIBL '));
-  const json = JSON.parse(instr.replace(' ADDIN ZOTERO_BIBL ', ''));
-  assert.equal(json.style, 'http://www.zotero.org/styles/apa');
-  assert.ok(xml.includes('Smith, J. (2020).'));
+  assert.equal(instr, ' ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY ');
+  // begin/separate en el primer párrafo, end en el último.
+  const [first, second] = xml.split('</w:p>');
+  assert.match(first, /fldCharType="begin".*fldCharType="separate".*Smith/);
+  assert.ok(!first.includes('fldCharType="end"'));
+  assert.match(second, /García.*fldCharType="end"/);
+  assert.ok(!xml.includes('w:pStyle'), 'sin pStyle si no se pide');
 });
 
 test('loadDocx rechaza un zip sin word/document.xml', async () => {
@@ -297,11 +310,54 @@ test('loadDocx rechaza un zip sin word/document.xml', async () => {
   await assert.rejects(() => loadDocx(buffer), /falta word\/document.xml/);
 });
 
-test('hashCode produce enteros no negativos', () => {
-  const h = hashCode('ABC12345');
-  assert.ok(Number.isInteger(h));
-  assert.ok(h >= 0);
-  assert.equal(hashCode('ABC12345'), hashCode('ABC12345'));
+test('ensureDocumentPrefs crea ZOTERO_PREF_n en trozos de 255 y registra custom.xml', async () => {
+  const ctx = await load(BASIC_DOC);
+  assert.equal(await readDocumentPrefs(ctx), null);
+
+  const res = await ensureDocumentPrefs(ctx, { styleID: 'http://www.zotero.org/styles/ieee', locale: 'es-ES' });
+  assert.equal(res.created, true);
+  assert.equal(res.prefs.styleID, 'http://www.zotero.org/styles/ieee');
+  assert.equal(res.prefs.locale, 'es-ES');
+  assert.equal(res.prefs.fieldType, 'Field');
+  assert.match(res.prefs.raw, /^<data data-version="3" zotero-version="[^"]+"><session id="\w{8}"\/><style id="http:\/\/www\.zotero\.org\/styles\/ieee" locale="es-ES" hasBibliography="1" bibliographyStyleHasBeenSet="0"\/><prefs><pref name="fieldType" value="Field"\/><\/prefs><\/data>$/);
+
+  // Se guarda y se vuelve a abrir: custom.xml, content type y relación presentes.
+  const reopened = await loadDocx(await buildDocxBuffer(ctx));
+  const custom = await reopened.zip.file('docProps/custom.xml').async('string');
+  assert.match(custom, /pid="2" name="ZOTERO_PREF_1"/);
+  assert.ok((await reopened.zip.file('[Content_Types].xml').async('string')).includes('PartName="/docProps/custom.xml"'));
+  assert.ok((await reopened.zip.file('_rels/.rels').async('string')).includes('Target="docProps/custom.xml"'));
+  assert.deepEqual(await readDocumentPrefs(reopened), res.prefs);
+});
+
+test('ensureDocumentPrefs parte las preferencias largas en propiedades de 255 caracteres', async () => {
+  const ctx = await load(BASIC_DOC);
+  const styleID = `http://www.zotero.org/styles/${'x'.repeat(150)}`;
+  const res = await ensureDocumentPrefs(ctx, { styleID, locale: 'es-ES' });
+  const custom = await ctx.zip.file('docProps/custom.xml').async('string');
+  const props = [...custom.matchAll(/pid="(\d+)" name="(ZOTERO_PREF_\d+)"><vt:lpwstr>([^<]*)</g)];
+  assert.deepEqual(props.map((p) => [p[1], p[2]]), [['2', 'ZOTERO_PREF_1'], ['3', 'ZOTERO_PREF_2']]);
+  const decoded = props.map((p) => p[3].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+  assert.equal(decoded[0].length, 255);
+  assert.equal(decoded.join(''), res.prefs.raw);
+  assert.equal(res.prefs.styleID, styleID);
+});
+
+test('ensureDocumentPrefs no pisa las preferencias que ya puso el plugin', async () => {
+  const zip = makeDocxZip(BASIC_DOC);
+  const pluginPrefs =
+    '&lt;data data-version="3" zotero-version="8.0.3"&gt;&lt;session id="6uaDJTTz"/&gt;&lt;style id="http://www.zotero.org/styles/apa" locale="en-US" hasBibliography="1" bibliographyStyleHasBeenSet="1"/&gt;&lt;prefs&gt;&lt;pref name="fieldType" value="Field"/&gt;&lt;/prefs&gt;&lt;/data&gt;';
+  zip.file(
+    'docProps/custom.xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">' +
+      `<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="ZOTERO_PREF_1"><vt:lpwstr>${pluginPrefs}</vt:lpwstr></property></Properties>`
+  );
+  const ctx = await loadDocx(await zip.generateAsync({ type: 'nodebuffer' }));
+  const res = await ensureDocumentPrefs(ctx, { styleID: 'http://www.zotero.org/styles/ieee', locale: 'es-ES' });
+  assert.equal(res.created, false);
+  assert.equal(res.prefs.styleID, 'http://www.zotero.org/styles/apa');
+  assert.equal(res.prefs.sessionID, '6uaDJTTz');
+  assert.equal(res.prefs.locale, 'en-US');
 });
 
 test('listDocumentCitations agrupa por campo con posición y localizador', async () => {

@@ -9,20 +9,30 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { ZoteroClient } from './zotero-client.js';
 import { envFlag, readFileForEdit, validateFilePath, withFileLock, writeFileAtomic } from './file-io.js';
-import { CitationManager, AVAILABLE_STYLES, FORMATS, LOCALES } from './cite.js';
+import {
+  CitationManager,
+  AVAILABLE_STYLES,
+  FORMATS,
+  LOCALES,
+  resolveStyleName,
+  styleNameFromZoteroId,
+  zoteroStyleId,
+} from './cite.js';
 import { countReferenceEntries, extractBibliographySection, updateBibliographySection } from './bib-section.js';
 import {
   openDocx,
   saveDocx,
   readParagraphs,
-  countExistingCitations,
   countMaxId,
   buildCitationRuns,
   insertCitationAtParagraph,
   upsertBibliography,
   listDocumentCitations,
   paragraphChildIndex,
-  hashCode,
+  readDocumentPrefs,
+  ensureDocumentPrefs,
+  hasParagraphStyle,
+  randomId,
   validateDocxPath,
 } from './docx.js';
 
@@ -57,6 +67,38 @@ async function run(handler) {
   } catch (err) {
     return fail(err && err.message ? err.message : String(err));
   }
+}
+
+/**
+ * Estilo y locale para un .docx: los indicados en la llamada; si no, los de las
+ * preferencias de Zotero del documento (si el estilo está disponible); si no,
+ * los valores por defecto. Avisa cuando Zotero vaya a usar otro estilo al refrescar.
+ */
+async function resolveDocxStyle(ctx, args) {
+  const prefs = await readDocumentPrefs(ctx);
+  const docStyleID = prefs && prefs.styleID;
+  const docStyle = docStyleID ? styleNameFromZoteroId(docStyleID) : null;
+  const warnings = [];
+  let style;
+  if (args.style) {
+    style = resolveStyleName(args.style);
+    if (docStyleID && docStyleID !== zoteroStyleId(style)) {
+      warnings.push(
+        `El documento está configurado en Zotero con el estilo ${docStyleID}; al pulsar Refresh en Word, Zotero usará ese estilo y no "${style}".`
+      );
+    }
+  } else if (docStyle) {
+    style = docStyle;
+  } else {
+    style = resolveStyleName(DEFAULT_STYLE);
+    if (docStyleID) {
+      warnings.push(
+        `El documento usa el estilo ${docStyleID}, que zotero-mcp no incluye; el texto se genera en "${style}" y Zotero lo corregirá al pulsar Refresh.`
+      );
+    }
+  }
+  const locale = String(args.locale || (prefs && prefs.locale) || DEFAULT_LOCALE).trim();
+  return { style, locale, prefs, warnings };
 }
 
 const CITATION_ITEM_FIELDS = ['locator', 'label', 'prefix', 'suffix'];
@@ -313,8 +355,8 @@ server.tool(
     filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
     key: z.string().min(1).describe('Key del item de Zotero.'),
     paragraphIndex: z.number().int().min(0).describe('Índice del párrafo donde insertar la cita (0‑based). Usa zotero_read_docx para ver los índices.'),
-    style: z.string().optional().describe(`Estilo CSL. Default: ${DEFAULT_STYLE}.`),
-    locale: z.string().optional().describe(`Idioma. Default: ${DEFAULT_LOCALE}.`),
+    style: z.string().optional().describe(`Estilo CSL. Default: el configurado en el documento por Zotero, o ${DEFAULT_STYLE}.`),
+    locale: z.string().optional().describe(`Idioma. Default: el configurado en el documento por Zotero, o ${DEFAULT_LOCALE}.`),
     locator: z.string().optional().describe('Localizador (p. ej. "15").'),
     label: z.string().optional().describe('Etiqueta del localizador: page, chapter, section, figure, volume…'),
     prefix: z.string().optional().describe('Texto antes de la cita.'),
@@ -324,8 +366,6 @@ server.tool(
   },
   async (args) => run(async () => {
     const abs = validateDocxPath(args.filePath);
-    const style = String(args.style || DEFAULT_STYLE).trim();
-    const locale = String(args.locale || DEFAULT_LOCALE).trim();
     const key = String(args.key).trim();
 
     // Obtener el CSL JSON desde Zotero (con el id normalizado a key corta).
@@ -343,6 +383,7 @@ server.tool(
           `No existe el párrafo ${args.paragraphIndex} (el documento tiene ${readParagraphs(ctx).length} párrafos). Usa zotero_read_docx para ver la estructura.`
         );
       }
+      const { style, locale, warnings } = await resolveDocxStyle(ctx, args);
 
       // El texto de la cita se calcula con las citas que ya contiene el documento
       // (antes y después del párrafo), no con el registro en memoria del servidor:
@@ -367,16 +408,20 @@ server.tool(
         after,
       });
 
-      const existingCount = countExistingCitations(ctx);
-      const noteIndex = existingCount + 1;
-      const citationID = `CITE-${noteIndex}`;
+      // Como el plugin de Zotero: citationID aleatorio y noteIndex 0 (los estilos
+      // disponibles citan en el texto; Zotero recalcula noteIndex al refrescar).
+      const citationID = randomId(8);
+      const noteIndex = 0;
 
       // Asignar un id numérico único al itemData (debe coincidir con citationItem.id).
-      const maxId = countMaxId(ctx);
-      const numId = maxId + 1;
+      const numId = countMaxId(ctx) + 1;
 
+      // itemData sin la URI (zoteroURI no es enumerable); la URI va en `uris`.
+      // Zotero enlaza la cita con el item de la biblioteca a partir de esa URI.
       const itemData = { ...cslItem, id: numId };
-      const uris = [`http://zotero.org/users/0/items/${key}`];
+      const uris = [cslItem.zoteroURI || `http://zotero.org/users/0/items/${key}`];
+
+      const { created: prefsCreated } = await ensureDocumentPrefs(ctx, { styleID: zoteroStyleId(style), locale });
 
       const runs = buildCitationRuns({
         citationID,
@@ -403,13 +448,16 @@ server.tool(
         locale,
         citation: citeResult.citation,
         citationsInDocument: citations.length,
+        documentPrefs: prefsCreated ? 'creadas' : 'existentes',
         apply: args.apply === true,
         dryRun: args.apply !== true,
       };
       if (resolved.unresolved.length > 0) {
-        payload.warning =
-          `Algunas citas del documento no se pudieron resolver (${resolved.unresolved.join(', ')}) y no se tuvieron en cuenta para numerar o desambiguar esta cita; el plugin de Zotero la corregirá al refrescar.`;
+        warnings.push(
+          `Algunas citas del documento no se pudieron resolver (${resolved.unresolved.join(', ')}) y no se tuvieron en cuenta para numerar o desambiguar esta cita; el plugin de Zotero la corregirá al refrescar.`
+        );
       }
+      if (warnings.length > 0) payload.warnings = warnings;
 
       if (args.apply === true) {
         const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
@@ -430,17 +478,17 @@ server.tool(
   'Inserta o actualiza el campo de bibliografía Zotero (ADDIN ZOTERO_BIBL) en un documento Word, al final del documento. Las referencias se generan desde los campos de cita Zotero que ya contiene el propio documento (los insertados con zotero_insert_citation_docx o con el plugin de Word). Al abrir el archivo en Word con el plugin de Zotero, la bibliografía se renderiza con el estilo configurado.',
   {
     filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
-    style: z.string().optional().describe(`Estilo CSL (para la URL del estilo en el campo BIBL). Default: ${DEFAULT_STYLE}.`),
+    style: z.string().optional().describe(`Estilo CSL. Default: el configurado en el documento por Zotero, o ${DEFAULT_STYLE}.`),
+    locale: z.string().optional().describe(`Idioma. Default: el configurado en el documento por Zotero, o ${DEFAULT_LOCALE}.`),
     dryRun: z.boolean().optional().describe('Solo mostrar lo que cambiaría (default true).'),
     apply: z.boolean().optional().describe('Escribir el archivo (default false).'),
   },
   async (args) => run(async () => {
     const abs = validateDocxPath(args.filePath);
-    const style = String(args.style || DEFAULT_STYLE).trim();
-    const styleUrl = `http://www.zotero.org/styles/${style}`;
 
     return withFileLock(abs, async () => {
       const ctx = await openDocx(abs);
+      const { style, locale, warnings } = await resolveDocxStyle(ctx, args);
 
       // Las referencias salen de las citas Zotero del propio documento: se usa el
       // itemData incrustado en cada campo y, si falta, se busca la key en Zotero.
@@ -460,24 +508,31 @@ server.tool(
 
       const bib = await citationManager.bibliography({
         style,
-        locale: DEFAULT_LOCALE,
+        locale,
         items,
         format: 'plaintext',
       });
 
-      const result = upsertBibliography(ctx.doc, styleUrl, bib.bibliography);
+      // Un párrafo por referencia, con el estilo "Bibliography" si el documento ya
+      // lo tiene (si no, Zotero lo crea y aplica la sangría al pulsar Refresh).
+      const pStyle = (await hasParagraphStyle(ctx, 'Bibliography')) ? 'Bibliography' : undefined;
+      const result = upsertBibliography(ctx.doc, bib.entries, { pStyle });
+      const { created: prefsCreated } = await ensureDocumentPrefs(ctx, { styleID: zoteroStyleId(style), locale });
 
       const payload = {
         filePath: abs,
         style,
-        styleUrl,
+        locale,
+        styleID: zoteroStyleId(style),
         citationsInDocument: citations.length,
         entries: bib.count,
         ...result,
+        documentPrefs: prefsCreated ? 'creadas' : 'existentes',
         apply: args.apply === true,
         dryRun: args.apply !== true,
       };
       if (bib.bibliography) payload.bibliography = bib.bibliography;
+      if (warnings.length > 0) payload.warnings = warnings;
 
       if (args.apply === true) {
         const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });

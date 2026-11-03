@@ -101,6 +101,130 @@ export async function saveDocx(ctx, filePath, { backup = true } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Preferencias de documento de Zotero (docProps/custom.xml → ZOTERO_PREF_n)
+// ---------------------------------------------------------------------------
+//
+// El plugin de Word guarda las preferencias del documento (estilo, idioma,
+// tipo de campo, sesión) como propiedades personalizadas ZOTERO_PREF_1,
+// ZOTERO_PREF_2…, que juntas forman un XML <data data-version="3" …>. Sin
+// ellas, al pulsar Refresh Zotero abre el diálogo "Preferencias del
+// documento". Formato tomado del código de integración de Zotero
+// (Zotero.Integration.DocumentData) y de documentos reales creados con el plugin.
+
+const CUSTOM_PART = 'docProps/custom.xml';
+const CUSTOM_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.custom-properties+xml';
+const CUSTOM_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties';
+const CUSTOM_FMTID = '{D5CDD505-2E9C-101B-9397-08002B2CF9AE}';
+const PREF_PROPERTY = 'ZOTERO_PREF';
+const PREF_CHUNK = 255; // longitud máxima de cada propiedad (texto sin escapar)
+const ZOTERO_DATA_VERSION = '3';
+
+/** Cadena aleatoria alfanumérica (como Zotero.Utilities.randomString). */
+export function randomId(length = 8) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+/**
+ * Lee las preferencias de Zotero del documento.
+ * @returns {Promise<{raw: string, styleID: string|null, locale: string|null, sessionID: string|null, fieldType: string|null}|null>}
+ */
+export async function readDocumentPrefs({ zip }) {
+  const part = zip.file(CUSTOM_PART);
+  if (!part) return null;
+  const xml = await part.async('string');
+  const chunks = [];
+  const re = /<property\b[^>]*\bname="ZOTERO_PREF_(\d+)"[^>]*>\s*<vt:lpwstr>([^<]*)<\/vt:lpwstr>\s*<\/property>/g;
+  for (const m of xml.matchAll(re)) chunks.push([Number(m[1]), decodeXml(m[2])]);
+  if (chunks.length === 0) return null;
+  const raw = chunks.sort((a, b) => a[0] - b[0]).map((c) => c[1]).join('');
+  const attrOf = (tag, name) => {
+    const t = raw.match(new RegExp(`<${tag}\\b[^>]*>`));
+    const a = t && t[0].match(new RegExp(`\\b${name}="([^"]*)"`));
+    return a ? decodeXml(a[1]) : null;
+  };
+  const fieldType = raw.match(/<pref name="fieldType" value="([^"]*)"/);
+  return {
+    raw,
+    styleID: attrOf('style', 'id'),
+    locale: attrOf('style', 'locale'),
+    sessionID: attrOf('session', 'id'),
+    fieldType: fieldType ? fieldType[1] : null,
+  };
+}
+
+/** XML de preferencias en el formato de Zotero.Integration.DocumentData.serialize(). */
+export function buildDocumentPrefs({ styleID, locale, sessionID = randomId() }) {
+  const esc = (s) => encodeXml(s).replace(/"/g, '&quot;');
+  return (
+    `<data data-version="${ZOTERO_DATA_VERSION}" zotero-version="7.0">` +
+    `<session id="${esc(sessionID)}"/>` +
+    `<style id="${esc(styleID)}"${locale ? ` locale="${esc(locale)}"` : ''} hasBibliography="1" bibliographyStyleHasBeenSet="0"/>` +
+    '<prefs><pref name="fieldType" value="Field"/></prefs></data>'
+  );
+}
+
+/**
+ * Crea las preferencias de Zotero si el documento no las tiene (nunca pisa
+ * las que haya puesto el plugin). Añade docProps/custom.xml, su content type
+ * y su relación si faltan.
+ * @returns {Promise<{created: boolean, prefs: object}>}
+ */
+export async function ensureDocumentPrefs(ctx, { styleID, locale }) {
+  const existing = await readDocumentPrefs(ctx);
+  if (existing) return { created: false, prefs: existing };
+
+  const { zip } = ctx;
+  const data = buildDocumentPrefs({ styleID, locale });
+  const chunks = [];
+  for (let i = 0; i < data.length; i += PREF_CHUNK) chunks.push(data.slice(i, i + PREF_CHUNK));
+
+  let custom = zip.file(CUSTOM_PART) ? await zip.file(CUSTOM_PART).async('string') : null;
+  if (!custom) {
+    custom =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+      '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" ' +
+      'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"></Properties>';
+  }
+  custom = custom.replace(/<Properties\b([^>]*)\/>/, '<Properties$1></Properties>');
+  let pid = Math.max(1, ...[...custom.matchAll(/\bpid="(\d+)"/g)].map((m) => Number(m[1])));
+  const props = chunks
+    .map(
+      (chunk, i) =>
+        `<property fmtid="${CUSTOM_FMTID}" pid="${++pid}" name="${PREF_PROPERTY}_${i + 1}"><vt:lpwstr>${encodeXml(chunk)}</vt:lpwstr></property>`
+    )
+    .join('');
+  zip.file(CUSTOM_PART, custom.replace('</Properties>', `${props}</Properties>`));
+
+  const ctPart = zip.file('[Content_Types].xml');
+  if (ctPart) {
+    const ct = await ctPart.async('string');
+    if (!ct.includes('PartName="/docProps/custom.xml"')) {
+      zip.file(
+        '[Content_Types].xml',
+        ct.replace('</Types>', `<Override PartName="/${CUSTOM_PART}" ContentType="${CUSTOM_CONTENT_TYPE}"/></Types>`)
+      );
+    }
+  }
+  const relsPart = zip.file('_rels/.rels');
+  if (relsPart) {
+    const rels = await relsPart.async('string');
+    if (!rels.includes(CUSTOM_REL_TYPE)) {
+      const ids = new Set([...rels.matchAll(/\bId="([^"]+)"/g)].map((m) => m[1]));
+      let n = ids.size + 1;
+      while (ids.has(`rId${n}`)) n++;
+      zip.file(
+        '_rels/.rels',
+        rels.replace('</Relationships>', `<Relationship Id="rId${n}" Type="${CUSTOM_REL_TYPE}" Target="${CUSTOM_PART}"/></Relationships>`)
+      );
+    }
+  }
+  return { created: true, prefs: await readDocumentPrefs(ctx) };
+}
+
+// ---------------------------------------------------------------------------
 // Lectura de párrafos
 // ---------------------------------------------------------------------------
 
@@ -271,6 +395,8 @@ export function buildCitationRuns({
   if (suffix) citationItem.suffix = suffix;
 
   const visible = formattedCitation || plainCitation || '';
+  // Mismo formato que escribe el plugin de Zotero (incluida la clave "schema"
+  // y el espacio final del código de campo).
   const jsonPayload = JSON.stringify({
     citationID,
     properties: {
@@ -279,40 +405,46 @@ export function buildCitationRuns({
       noteIndex,
     },
     citationItems: [citationItem],
+    schema: CSL_CITATION_SCHEMA,
   });
 
   return [
     fldCharRun('begin'),
-    instrTextRun(` ADDIN ZOTERO_ITEM CSL_CITATION ${jsonPayload}`),
+    instrTextRun(` ADDIN ZOTERO_ITEM CSL_CITATION ${jsonPayload} `),
     fldCharRun('separate'),
     el('w:r', [textEl(visible)]),
     fldCharRun('end'),
   ];
 }
 
-/** Párrafo (w:p) con el campo ADDIN ZOTERO_BIBL y el texto de la bibliografía. */
-export function buildBibliographyParagraph(styleUrl, bibText) {
-  const styleJson = JSON.stringify({
-    style: styleUrl,
-    fieldType: 'Field',
-    hasBibliography: true,
-  });
+const CSL_CITATION_SCHEMA = 'https://github.com/citation-style-language/schema/raw/master/csl-citation.json';
+const BIBL_INSTRUCTION = ' ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY ';
 
-  // Cada línea de la bibliografía es un w:t, con w:br entre líneas.
-  const lines = String(bibText || '').split('\n');
-  const content = [];
-  lines.forEach((line, i) => {
-    if (i > 0) content.push(el('w:br', []));
-    content.push(textEl(line));
+/**
+ * Párrafos (w:p) de la bibliografía, uno por referencia como hace el plugin:
+ * el campo ADDIN ZOTERO_BIBL empieza en el primero y termina en el último.
+ * @param {string[]} entries Referencias en texto plano.
+ * @param {object} [opts]
+ * @param {string} [opts.pStyle] Estilo de párrafo (p. ej. "Bibliography") si existe en el documento.
+ */
+export function buildBibliographyParagraphs(entries, { pStyle } = {}) {
+  const lines = (entries || []).map((e) => String(e)).filter((e) => e.trim());
+  if (lines.length === 0) lines.push('');
+  const pPr = () => (pStyle ? [el('w:pPr', [el('w:pStyle', [], { 'w:val': pStyle })])] : []);
+  return lines.map((line, i) => {
+    const content = [...pPr()];
+    if (i === 0) content.push(fldCharRun('begin'), instrTextRun(BIBL_INSTRUCTION), fldCharRun('separate'));
+    content.push(el('w:r', [textEl(line)]));
+    if (i === lines.length - 1) content.push(fldCharRun('end'));
+    return el('w:p', content);
   });
+}
 
-  return el('w:p', [
-    fldCharRun('begin'),
-    instrTextRun(` ADDIN ZOTERO_BIBL ${styleJson}`),
-    fldCharRun('separate'),
-    el('w:r', content),
-    fldCharRun('end'),
-  ]);
+/** ¿El documento define el estilo de párrafo `styleId` en word/styles.xml? */
+export async function hasParagraphStyle({ zip }, styleId) {
+  const part = zip.file('word/styles.xml');
+  if (!part) return false;
+  return (await part.async('string')).includes(`w:styleId="${styleId}"`);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,11 +479,13 @@ export function findBibliographyField(doc) {
 
 /**
  * Reemplaza el campo de bibliografía existente (todos los párrafos que abarca)
- * o, si no hay, añade uno al final del cuerpo (antes de w:sectPr).
+ * o, si no hay, lo añade al final del cuerpo (antes de w:sectPr).
+ * @param {string[]} entries Referencias en texto plano.
+ * @param {object} [opts] Ver buildBibliographyParagraphs.
  */
-export function upsertBibliography(doc, styleUrl, bibText) {
+export function upsertBibliography(doc, entries, opts = {}) {
   const body = getBody(doc);
-  const bibP = buildBibliographyParagraph(styleUrl, bibText);
+  const bibParagraphs = buildBibliographyParagraphs(entries, opts);
   const existing = findBibliographyField(doc);
 
   if (existing) {
@@ -360,7 +494,7 @@ export function upsertBibliography(doc, styleUrl, bibText) {
         'La bibliografía de Zotero del documento está dentro de una tabla u otro contenedor; actualízala desde Word con el plugin de Zotero.'
       );
     }
-    body.splice(existing.startChild, existing.endChild - existing.startChild + 1, bibP);
+    body.splice(existing.startChild, existing.endChild - existing.startChild + 1, ...bibParagraphs);
     return { replaced: true, paragraphIndex: existing.paragraphIndex };
   }
 
@@ -371,8 +505,8 @@ export function upsertBibliography(doc, styleUrl, bibText) {
       break;
     }
   }
-  body.splice(insertAt, 0, bibP);
-  const paragraphIndex = topLevelParagraphs(doc).findIndex((p) => p.node === bibP);
+  body.splice(insertAt, 0, ...bibParagraphs);
+  const paragraphIndex = topLevelParagraphs(doc).findIndex((p) => p.node === bibParagraphs[0]);
   return { replaced: false, added: true, paragraphIndex };
 }
 
@@ -464,11 +598,3 @@ export function encodeXml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function hashCode(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}

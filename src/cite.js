@@ -33,6 +33,29 @@ const LOCALE_FALLBACK = 'en-US';
 
 export const FORMATS = ['plaintext', 'markdown', 'html'];
 
+const ZOTERO_STYLE_PREFIX = 'http://www.zotero.org/styles/';
+
+/** Nombre de estilo soportado (resuelve alias y mayúsculas) o error con la lista disponible. */
+export function resolveStyleName(style) {
+  const s = String(style || 'apa').trim().toLowerCase();
+  const name = STYLE_ALIASES[s] || s;
+  if (!AVAILABLE_STYLES.includes(name)) {
+    throw new Error(`Estilo no soportado: "${style}". Estilos disponibles: ${AVAILABLE_STYLES.join(', ')}.`);
+  }
+  return name;
+}
+
+/** ID de estilo de Zotero (http://www.zotero.org/styles/<nombre>) para un estilo soportado. */
+export function zoteroStyleId(style) {
+  return ZOTERO_STYLE_PREFIX + resolveStyleName(style);
+}
+
+/** Estilo soportado que corresponde a un ID de estilo de Zotero, o null si no está disponible. */
+export function styleNameFromZoteroId(styleID) {
+  const m = String(styleID || '').match(/^https?:\/\/(?:www\.)?zotero\.org\/styles\/([\w-]+)\/?$/);
+  return m && AVAILABLE_STYLES.includes(m[1]) ? m[1] : null;
+}
+
 export class CitationManager {
   /**
    * @param {object} opts
@@ -51,14 +74,7 @@ export class CitationManager {
   }
 
   _normalizeStyle(style) {
-    const s = String(style || 'apa').toLowerCase();
-    const name = STYLE_ALIASES[s] || s;
-    if (!STYLES.includes(name)) {
-      throw new Error(
-        `Estilo no soportado: "${style}". Estilos disponibles: ${AVAILABLE_STYLES.join(', ')}.`
-      );
-    }
-    return name;
+    return resolveStyleName(style);
   }
 
   _normalizeLocale(locale) {
@@ -318,6 +334,9 @@ function extractCitationText(out, index) {
 
 function htmlToText(html) {
   return String(html ?? '')
+    // Estilos numéricos: <div class="csl-left-margin">[1]</div><div class="csl-right-inline">…
+    // → "[1] …" (sin esto el número queda pegado al autor).
+    .replace(/<\/div>\s*<div[^>]*>/g, ' ')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&#x2019;/gi, "'")

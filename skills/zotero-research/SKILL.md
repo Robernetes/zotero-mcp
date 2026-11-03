@@ -54,18 +54,21 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 
 1. `zotero_insert_citation_docx` con:
    - `filePath`, `key`, `paragraphIndex` (del paso anterior),
-   - `style`, `locale`, `locator`, `label`, `prefix`, `suffix`,
+   - `locator`, `label`, `prefix`, `suffix` si hacen falta,
+   - `style`/`locale` solo si el documento aún no tiene estilo: si ya está configurado en Zotero (preferencias del documento), se usan los suyos por defecto,
    - `apply: true` para escribir el archivo (sin `apply` solo hace dryRun).
 2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` al final del párrafo indicado.
 3. El campo incluye el CSL JSON del item para que Zotero pueda renderizarlo sin conexión.
-4. `noteIndex` y `citationID` se asignan automáticamente por orden de inserción.
+4. El campo usa el mismo formato que el plugin de Zotero (URI real del item en tu biblioteca, `citationID` aleatorio, `noteIndex` 0), así que al pulsar *Refresh* Zotero enlaza la cita con el item de la biblioteca.
+   Si el documento no tenía preferencias de Zotero, se crean con el estilo y el idioma usados (`documentPrefs: "creadas"`); así Word no pide elegir estilo al refrescar. Las preferencias existentes nunca se modifican.
+   Si la respuesta trae `warnings` (p. ej. el documento está configurado con otro estilo), transmítelos al usuario.
 5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después del párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
 6. Las citas ya insertadas no se reescriben: si una cita nueva cambia la numeración o la desambiguación de las anteriores, el plugin de Zotero las actualiza al pulsar *Refresh* en Word.
 
 ### Actualizar la bibliografía
 
-1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath`, `style` y `apply: true`.
-2. Inserta (o actualiza si ya existe) el campo `ADDIN ZOTERO_BIBL` al final del documento.
+1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath` y `apply: true` (`style`/`locale` salen del documento si no se indican).
+2. Inserta (o reemplaza si ya existe) el campo `ADDIN ZOTERO_BIBL` al final del documento, con un párrafo por referencia como el plugin.
 
 ### Escritura segura
 
