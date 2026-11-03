@@ -56,18 +56,50 @@ export class ExternalSearch {
 
   /** Busca una publicación por DOI: Crossref y, si no la tiene (p. ej. DOI de DataCite), OpenAlex. */
   async lookupDoi(doi, { includeAbstract = false } = {}) {
+    const { source, work } = await this._fetchDoiWork(doi);
+    const toResult = source === 'crossref' ? fromCrossref : fromOpenAlex;
+    return { source, result: toResult(work, { includeAbstract }) };
+  }
+
+  /**
+   * Metadatos CSL JSON de una publicación, para guardarla en Zotero.
+   * Por DOI: Crossref y, si no lo tiene, OpenAlex. Por openAlexId: OpenAlex.
+   * @returns {Promise<{source: 'crossref'|'openalex', csl: object}>}
+   */
+  async fetchCsl({ doi, openAlexId } = {}) {
+    if (doi) {
+      const { source, work } = await this._fetchDoiWork(doi);
+      const csl = source === 'crossref' ? crossrefToCsl(work) : openAlexToCsl(work);
+      // Crossref y OpenAlex devuelven el DOI en minúsculas: se guarda como lo escribió el usuario.
+      const written = doiAsWritten(doi);
+      if (normalizeDoi(csl.DOI) === normalizeDoi(written)) {
+        csl.DOI = written;
+        csl.URL = `https://doi.org/${written}`;
+      }
+      return { source, csl };
+    }
+    const id = String(openAlexId || '').trim().replace(/^https?:\/\/openalex\.org\//i, '');
+    if (!/^W\d+$/i.test(id)) {
+      throw new ExternalSearchError(openAlexId ? `"${openAlexId}" no parece un id de OpenAlex (W123...).` : 'Indica doi u openAlexId.');
+    }
+    const data = await this._getJSON(`${this.openAlexUrl}/works/${id.toUpperCase()}${this._openAlexQuery()}`, 'OpenAlex');
+    return { source: 'openalex', csl: openAlexToCsl(data) };
+  }
+
+  /** "work" de un DOI: de Crossref y, si no lo tiene, de OpenAlex. */
+  async _fetchDoiWork(doi) {
     const clean = normalizeDoi(doi);
     if (!clean) throw new ExternalSearchError(`"${doi}" no parece un DOI (formato 10.xxxx/...).`);
     let crossrefError;
     try {
       const data = await this._getJSON(`${this.crossrefUrl}/works/${encodeURIComponent(clean)}${this._crossrefQuery()}`, 'Crossref');
-      return { source: 'crossref', result: fromCrossref(data.message, { includeAbstract }) };
+      return { source: 'crossref', work: data.message };
     } catch (err) {
       crossrefError = err;
     }
     try {
-      const data = await this._getJSON(`${this.openAlexUrl}/works/doi:${encodeURIComponent(clean)}${this._openAlexQuery()}`, 'OpenAlex');
-      return { source: 'openalex', result: fromOpenAlex(data, { includeAbstract }) };
+      const work = await this._getJSON(`${this.openAlexUrl}/works/doi:${encodeURIComponent(clean)}${this._openAlexQuery()}`, 'OpenAlex');
+      return { source: 'openalex', work };
     } catch (err) {
       if (crossrefError.status === 404 && err.status === 404) {
         throw new ExternalSearchError(`No se encontró el DOI ${clean} en Crossref ni en OpenAlex.`, { status: 404 });
@@ -199,6 +231,165 @@ export function fromCrossref(w, { includeAbstract = false } = {}) {
   };
   if (includeAbstract) result.abstract = truncate(cleanText(w.abstract));
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Conversión a CSL JSON (entrada del traductor "CSL JSON" de Zotero)
+// ---------------------------------------------------------------------------
+
+/** Tipos de Crossref → tipos CSL. */
+const CROSSREF_CSL_TYPES = {
+  'journal-article': 'article-journal',
+  'proceedings-article': 'paper-conference',
+  'book-chapter': 'chapter',
+  'book-section': 'chapter',
+  'book-part': 'chapter',
+  'reference-entry': 'entry',
+  'posted-content': 'article',
+  dissertation: 'thesis',
+  report: 'report',
+  'report-component': 'report',
+  book: 'book',
+  monograph: 'book',
+  'edited-book': 'book',
+  'reference-book': 'book',
+  'book-set': 'book',
+  'book-series': 'book',
+  dataset: 'dataset',
+  standard: 'standard',
+  'peer-review': 'review',
+};
+
+/** Tipos de OpenAlex → tipos CSL. */
+const OPENALEX_CSL_TYPES = {
+  article: 'article-journal',
+  book: 'book',
+  'book-chapter': 'chapter',
+  dissertation: 'thesis',
+  dataset: 'dataset',
+  preprint: 'article',
+  report: 'report',
+  review: 'review',
+  standard: 'standard',
+  letter: 'article-journal',
+  editorial: 'article-journal',
+  erratum: 'article-journal',
+  'reference-entry': 'entry',
+};
+
+/** Crossref "work" → CSL JSON. */
+export function crossrefToCsl(w) {
+  const doi = doiAsWritten(w.DOI);
+  const title = cleanText(first(w.title));
+  const subtitle = cleanText(first(w.subtitle));
+  const type = CROSSREF_CSL_TYPES[w.type] || 'document';
+  const csl = {
+    type,
+    title: subtitle && title && !title.toLowerCase().includes(subtitle.toLowerCase()) ? `${title}: ${subtitle}` : title,
+    author: crossrefNames(w.author),
+    editor: crossrefNames(w.editor),
+    translator: crossrefNames(w.translator),
+    issued: cslDate(w.issued) || cslDate(w['published-print']) || cslDate(w['published-online']),
+    'container-title': cleanText(first(w['container-title'])),
+    'container-title-short': shortTitle(w),
+    volume: w.volume,
+    issue: w.issue,
+    page: w.page,
+    DOI: doi,
+    URL: doi ? `https://doi.org/${doi}` : w.URL,
+    ISSN: first(w.ISSN),
+    ISBN: first(w.ISBN),
+    publisher: w.publisher,
+    'publisher-place': w['publisher-location'],
+    language: w.language,
+    abstract: cleanText(w.abstract),
+    'event-title': w.event && typeof w.event === 'object' ? w.event.name : undefined,
+  };
+  // En tesis, la institución es la "editorial".
+  if (type === 'thesis' && Array.isArray(w.institution) && w.institution[0] && w.institution[0].name) {
+    csl.publisher = w.institution[0].name;
+  }
+  return compact(csl);
+}
+
+/** OpenAlex "work" → CSL JSON. */
+export function openAlexToCsl(w) {
+  const loc = w.primary_location || {};
+  const src = loc.source || {};
+  const biblio = w.biblio || {};
+  let type = OPENALEX_CSL_TYPES[w.type] || 'document';
+  // Un "article" fuera de una revista (repositorio, congreso) no es un artículo de revista.
+  if (w.type === 'article' && src.type && src.type !== 'journal') {
+    type = src.type === 'conference' ? 'paper-conference' : 'article';
+  }
+  const doi = normalizeDoi(w.doi);
+  const pages = [biblio.first_page, biblio.last_page].filter(Boolean);
+  return compact({
+    type,
+    title: cleanText(w.display_name || w.title),
+    author: (w.authorships || [])
+      .map((a) => (a.author && a.author.display_name) || a.raw_author_name)
+      .filter(Boolean)
+      .map(splitName),
+    issued: w.publication_date
+      ? { 'date-parts': [w.publication_date.split('-').map((n) => Number.parseInt(n, 10)).filter(Number.isInteger)] }
+      : w.publication_year
+        ? { 'date-parts': [[w.publication_year]] }
+        : undefined,
+    'container-title': src.type === 'repository' ? undefined : src.display_name,
+    volume: biblio.volume,
+    issue: biblio.issue,
+    page: pages.length === 2 && pages[0] !== pages[1] ? pages.join('-') : pages[0],
+    DOI: doi,
+    URL: doi ? `https://doi.org/${doi}` : loc.landing_page_url || w.id,
+    ISSN: src.issn_l,
+    publisher: src.host_organization_name,
+    language: w.language,
+    abstract: abstractFromInvertedIndex(w.abstract_inverted_index),
+  });
+}
+
+/** DOI sin prefijo pero con sus mayúsculas originales (Zotero lo guarda tal cual). */
+function doiAsWritten(value) {
+  if (!normalizeDoi(value)) return null;
+  return String(value).trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').replace(/^doi:\s*/i, '');
+}
+
+function shortTitle(w) {
+  const short = cleanText(first(w['short-container-title'] || w['container-title-short']));
+  return short && short !== cleanText(first(w['container-title'])) ? short : undefined;
+}
+
+function crossrefNames(list) {
+  if (!Array.isArray(list)) return undefined;
+  const names = list
+    .map((a) => {
+      if (a.family) return compact({ family: cleanText(a.family), given: cleanText(a.given) });
+      if (a.name) return { literal: cleanText(a.name) };
+      return null;
+    })
+    .filter(Boolean);
+  return names.length ? names : undefined;
+}
+
+/** "Arlene J. Astell" → { given: "Arlene J.", family: "Astell" } (OpenAlex solo da el nombre completo). */
+function splitName(full) {
+  const parts = String(full).trim().split(/\s+/);
+  if (parts.length < 2) return { literal: parts[0] };
+  return { given: parts.slice(0, -1).join(' '), family: parts[parts.length - 1] };
+}
+
+function cslDate(date) {
+  const parts = date && date['date-parts'] && date['date-parts'][0];
+  if (!Array.isArray(parts) || !Number.isInteger(parts[0])) return undefined;
+  return { 'date-parts': [parts.filter(Number.isInteger)] };
+}
+
+/** Quita propiedades vacías (undefined, null, '', []). */
+function compact(obj) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0))
+  );
 }
 
 function authorFields(authors) {

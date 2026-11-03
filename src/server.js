@@ -1,15 +1,18 @@
 // server.js
-// Servidor MCP de Zotero (API local, solo lectura).
+// Servidor MCP de Zotero (API local de solo lectura; zotero_add_item guarda a
+// través del conector de Zotero, solo con apply:true).
 // Herramientas: zotero_status, zotero_search, zotero_get_item,
 // zotero_list_collections, zotero_cite, zotero_bibliography,
 // zotero_read_docx, zotero_insert_citation_docx, zotero_update_bibliography_docx,
-// zotero_find_external (búsqueda fuera de la biblioteca: OpenAlex / Crossref).
+// zotero_find_external (búsqueda fuera de la biblioteca: OpenAlex / Crossref),
+// zotero_add_item (guardar en la biblioteca).
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { ZoteroClient } from './zotero-client.js';
 import { ExternalSearch, SOURCES } from './external-search.js';
+import { ZoteroConnector, collectionPath, findTargetByPath } from './zotero-connector.js';
 import { envFlag, readFileForEdit, validateFilePath, withFileLock, writeFileAtomic } from './file-io.js';
 import {
   CitationManager,
@@ -46,6 +49,9 @@ const DEFAULT_LOCALE = (env.ZOTERO_LOCALE || 'es-ES').trim();
 const BACKUP = envFlag(env.ZOTERO_MCP_BACKUP, true);
 
 const zotero = new ZoteroClient({ baseUrl: API_URL });
+
+// Guardado de items: servidor del conector de Zotero (mismo host y puerto que la API local).
+const zoteroConnector = ZoteroConnector.fromApiUrl(API_URL);
 
 // Búsqueda externa: OPENALEX_API_KEY (opcional) da cuota propia en OpenAlex;
 // ZOTERO_MCP_CONTACT_EMAIL (opcional) se envía a OpenAlex/Crossref como contacto.
@@ -196,7 +202,7 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   'zotero_list_collections',
-  'Lista las colecciones de la biblioteca local de Zotero (key + nombre).',
+  'Lista las colecciones de la biblioteca local de Zotero (key, nombre y parentKey de la colección padre).',
   {},
   async () => run(async () => {
     const collections = await zotero.listCollections();
@@ -561,7 +567,7 @@ server.tool(
   'zotero_find_external',
   'Busca publicaciones FUERA de la biblioteca de Zotero (OpenAlex y Crossref) por tema, título, autor o DOI. ' +
     'Devuelve título, autores, año, revista, DOI, URL y acceso abierto, e indica en inLibrary si cada una ya está en la biblioteca. ' +
-    'No guarda nada en Zotero; para citar algo que no esté en la biblioteca, el usuario debe añadirlo antes (p. ej. con su DOI).',
+    'No guarda nada: para citar algo que no esté en la biblioteca, guárdalo antes con zotero_add_item (doi u openAlexId).',
   {
     query: z.string().optional().describe('Texto de búsqueda: tema, título, autores. Requerido si no hay doi.'),
     doi: z.string().optional().describe('DOI exacto (10.xxxx/... o https://doi.org/...). Si se indica, se ignora query.'),
@@ -614,6 +620,106 @@ server.tool(
     return ok(payload);
   })
 );
+
+// ---------------------------------------------------------------------------
+// 11. zotero_add_item
+// ---------------------------------------------------------------------------
+server.tool(
+  'zotero_add_item',
+  'Guarda en la biblioteca de Zotero una publicación encontrada con zotero_find_external, por DOI u openAlexId. ' +
+    'Sin apply:true solo muestra qué se guardaría y dónde. Requiere Zotero abierto. ' +
+    'Confirma con el usuario antes de guardar. No guarda duplicados salvo allowDuplicate:true.',
+  {
+    doi: z.string().optional().describe('DOI de la publicación (10.xxxx/... o https://doi.org/...).'),
+    openAlexId: z.string().optional().describe('Id de OpenAlex (W123...) para publicaciones sin DOI (campo openAlexId de zotero_find_external).'),
+    collectionKey: z.string().optional().describe('Colección destino (key de zotero_list_collections). Si se omite: la colección seleccionada en Zotero.'),
+    tags: z.array(z.string().min(1)).max(20).optional().describe('Etiquetas para el item.'),
+    allowDuplicate: z.boolean().optional().describe('Guardar aunque ya exista en la biblioteca (default false).'),
+    apply: z.boolean().optional().describe('Guardar de verdad (default false: solo vista previa).'),
+  },
+  async (args) => run(async () => {
+    if (!args.doi && !args.openAlexId) throw new Error('Indica doi u openAlexId.');
+    const { source, csl } = await externalSearch.fetchCsl({ doi: args.doi, openAlexId: args.openAlexId });
+    if (!csl.title) throw new Error('La publicación no tiene título en la fuente; no se puede guardar.');
+    const preview = cslSummary(csl);
+
+    const existing = await zotero.findExisting({ doi: csl.DOI, title: csl.title });
+    const target = await resolveSaveTarget(args.collectionKey);
+    const tags = [...new Set((args.tags || []).map((t) => t.trim()).filter(Boolean))];
+    const base = {
+      item: preview,
+      metadataSource: source,
+      target: target.name,
+      collectionKey: args.collectionKey ?? null,
+      tags,
+      inLibrary: existing ? { key: existing.key, title: existing.title } : null,
+    };
+
+    if (existing && !args.allowDuplicate) {
+      return ok({
+        ...base,
+        saved: false,
+        message: `Ya está en la biblioteca con la key ${existing.key}; no se guarda de nuevo (usa allowDuplicate:true para forzarlo).`,
+      });
+    }
+    if (!args.apply) {
+      return ok({ ...base, saved: false, dryRun: true, message: 'Vista previa: repite con apply:true para guardar.' });
+    }
+
+    const sessionID = `zotero-mcp-${randomId(10)}`;
+    const saved = await zoteroConnector.importCsl([{ ...csl, id: sessionID }], sessionID);
+    if (saved.length === 0) throw new Error('Zotero no guardó ningún item.');
+    // Lo mueve a la colección elegida (el import guarda en la seleccionada) y pone las etiquetas.
+    await zoteroConnector.updateSession(sessionID, target.id, tags);
+
+    let key = saved[0] && saved[0].key;
+    if (!key) {
+      const found = await zotero.findExisting({ doi: csl.DOI, title: csl.title });
+      key = found ? found.key : null;
+    }
+    return ok({ ...base, saved: true, key, message: `Guardado en "${target.name}"${key ? ` con la key ${key}` : ''}.` });
+  })
+);
+
+/** Resumen legible del CSL que se va a guardar. */
+function cslSummary(csl) {
+  const names = (csl.author || []).map((a) => a.literal || [a.given, a.family].filter(Boolean).join(' '));
+  return {
+    type: csl.type,
+    title: csl.title,
+    authors: names.slice(0, 10),
+    ...(names.length > 10 ? { moreAuthors: names.length - 10 } : {}),
+    year: csl.issued && csl.issued['date-parts'] ? csl.issued['date-parts'][0][0] ?? null : null,
+    venue: csl['container-title'] ?? null,
+    publisher: csl.publisher ?? null,
+    doi: csl.DOI ?? null,
+    url: csl.URL ?? null,
+  };
+}
+
+/**
+ * Destino de guardado en el conector: la colección de collectionKey (por su
+ * ruta de nombres) o, sin ella, la colección seleccionada en Zotero.
+ * @returns {Promise<{id: string, name: string}>}
+ */
+async function resolveSaveTarget(collectionKey) {
+  const { selected, library, targets } = await zoteroConnector.getSaveTargets();
+  if (!collectionKey) return selected;
+  const collections = await zotero.listCollections();
+  const path = collectionPath(collectionKey, collections);
+  if (path.length === 0) {
+    throw new Error(`No existe la colección con key "${collectionKey}" (consúltalas con zotero_list_collections).`);
+  }
+  const matches = findTargetByPath(targets, path);
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length === 0
+        ? `Zotero no ofrece la colección "${path.join(' / ')}" como destino en ${library.name}.`
+        : `Hay ${matches.length} colecciones llamadas "${path.join(' / ')}"; renombra una en Zotero o guarda sin collectionKey.`
+    );
+  }
+  return { id: matches[0].id, name: path.join(' / ') };
+}
 
 // ---------------------------------------------------------------------------
 // Arranque

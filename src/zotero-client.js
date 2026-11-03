@@ -147,20 +147,27 @@ export class ZoteroClient {
 
   /** Lista las colecciones de la biblioteca local. */
   async listCollections() {
-    const params = new URLSearchParams();
-    params.set('format', 'json');
-    params.set('limit', '100');
-    const data = await this._getJSON(`/users/0/collections?${params.toString()}`);
-    return Array.isArray(data)
-      ? data.map((c) => {
-          const d = c && c.data ? c.data : c || {};
-          return {
-            key: c.key,
-            name: d.name || '(sin nombre)',
-            numItems: d.numItems != null ? d.numItems : null,
-          };
-        })
-      : [];
+    const PAGE = 100;
+    const all = [];
+    for (let start = 0; start < 10000; start += PAGE) {
+      const params = new URLSearchParams();
+      params.set('format', 'json');
+      params.set('limit', String(PAGE));
+      params.set('start', String(start));
+      const data = await this._getJSON(`/users/0/collections?${params.toString()}`);
+      const page = Array.isArray(data) ? data : [];
+      all.push(...page);
+      if (page.length < PAGE) break;
+    }
+    return all.map((c) => {
+      const d = c && c.data ? c.data : c || {};
+      return {
+        key: c.key,
+        name: d.name || '(sin nombre)',
+        parentKey: d.parentCollection || null,
+        numItems: d.numItems != null ? d.numItems : (c.meta && c.meta.numItems) ?? null,
+      };
+    });
   }
 }
 
