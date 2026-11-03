@@ -9,8 +9,9 @@ import { registerLibraryTools } from './tools/library.js';
 import { registerCitationTools } from './tools/citations.js';
 import { registerWordTools } from './tools/word.js';
 import { registerExternalTools } from './tools/external.js';
+import { NAME, VERSION } from './version.js';
 
-export const SERVER_INFO = { name: 'zotero-mcp', version: '0.1.0' };
+export const SERVER_INFO = { name: NAME, version: VERSION };
 
 /**
  * @param {import('./context.js').ToolContext} [ctx] Clientes y configuración (por defecto, de las variables de entorno).
