@@ -1,6 +1,6 @@
 ---
 name: zotero-research
-description: Busca en la biblioteca local de Zotero, genera citas en formato CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver) y mantiene actualizada la sección de bibliografía de documentos Markdown y Word. Usar cuando el usuario pida buscar referencias, citar fuentes, o actualizar/crear la bibliografía de un documento.
+description: Busca en la biblioteca local de Zotero (y fuera de ella, en OpenAlex/Crossref), genera citas en formato CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver) y mantiene actualizada la sección de bibliografía de documentos Markdown y Word. Usar cuando el usuario pida buscar referencias, citar fuentes, o actualizar/crear la bibliografía de un documento.
 ---
 
 # Investigación y citas con Zotero
@@ -12,6 +12,15 @@ Este flujo conecta con la biblioteca **local** de Zotero (API local en el puerto
 1. Usa `zotero_search` con palabras clave (`query`).
 2. Si el usuario menciona una carpeta/colección, consúltala con `zotero_list_collections` y filtra con `collectionKey`.
 3. Presenta los resultados con: clave, título, autores y año. No inventes datos: usa solo lo que devuelve la herramienta.
+
+### Buscar fuera de la biblioteca
+
+Si la biblioteca no tiene lo que el usuario necesita, o pide fuentes nuevas, usa `zotero_find_external`:
+
+1. `query` con el tema, título o autores (en el idioma de las publicaciones buscadas; en inglés suele haber más resultados), o `doi` si ya lo conoces. Filtra con `yearFrom`/`yearTo` si pide fuentes recientes, y usa `includeAbstract: true` para juzgar la relevancia.
+2. Presenta título, autores, año, revista y DOI. Señala cuáles tienen acceso abierto (`openAccessUrl`) y cuáles ya están en la biblioteca (`inLibrary.key`): esas se pueden citar directamente con su key.
+3. Las que no están en la biblioteca **no se pueden citar todavía**: el MCP no guarda en Zotero. Pide al usuario que las añada (en Zotero: botón de la varita, *Añadir elemento por identificador*, pegando el DOI) y después búscalas con `zotero_search` para obtener la key.
+4. Si llega un aviso de que OpenAlex no respondió, los resultados son de Crossref; menciónalo solo si importa (p. ej. no hay datos de acceso abierto).
 
 ## 2. Obtener detalles
 
@@ -88,6 +97,7 @@ Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan cor
 
 - No inventes citas ni referencias: verifica siempre con `zotero_search` / `zotero_get_item` que el item exista.
 - No modifiques la librería de Zotero: el MCP solo lee.
+- No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): primero el usuario debe añadirlos a Zotero.
 - No cambies el estilo de citación a mitad de documento.
 - Respeta el idioma del documento (`locale: es-ES` para documentos en español).
 - En documentos Word, no uses las herramientas de Markdown (zotero_cite textual en el .docx) — usa las de docx.

@@ -2,12 +2,14 @@
 // Servidor MCP de Zotero (API local, solo lectura).
 // Herramientas: zotero_status, zotero_search, zotero_get_item,
 // zotero_list_collections, zotero_cite, zotero_bibliography,
-// zotero_read_docx, zotero_insert_citation_docx, zotero_update_bibliography_docx.
+// zotero_read_docx, zotero_insert_citation_docx, zotero_update_bibliography_docx,
+// zotero_find_external (búsqueda fuera de la biblioteca: OpenAlex / Crossref).
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { ZoteroClient } from './zotero-client.js';
+import { ExternalSearch, SOURCES } from './external-search.js';
 import { envFlag, readFileForEdit, validateFilePath, withFileLock, writeFileAtomic } from './file-io.js';
 import {
   CitationManager,
@@ -44,6 +46,13 @@ const DEFAULT_LOCALE = (env.ZOTERO_LOCALE || 'es-ES').trim();
 const BACKUP = envFlag(env.ZOTERO_MCP_BACKUP, true);
 
 const zotero = new ZoteroClient({ baseUrl: API_URL });
+
+// Búsqueda externa: OPENALEX_API_KEY (opcional) da cuota propia en OpenAlex;
+// ZOTERO_MCP_CONTACT_EMAIL (opcional) se envía a OpenAlex/Crossref como contacto.
+const externalSearch = new ExternalSearch({
+  openAlexKey: env.OPENALEX_API_KEY,
+  contactEmail: env.ZOTERO_MCP_CONTACT_EMAIL,
+});
 
 const citationManager = new CitationManager({
   fetchItems: async (keys) => zotero.getByKeys(keys),
@@ -542,6 +551,67 @@ server.tool(
 
       return ok(payload);
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 10. zotero_find_external
+// ---------------------------------------------------------------------------
+server.tool(
+  'zotero_find_external',
+  'Busca publicaciones FUERA de la biblioteca de Zotero (OpenAlex y Crossref) por tema, título, autor o DOI. ' +
+    'Devuelve título, autores, año, revista, DOI, URL y acceso abierto, e indica en inLibrary si cada una ya está en la biblioteca. ' +
+    'No guarda nada en Zotero; para citar algo que no esté en la biblioteca, el usuario debe añadirlo antes (p. ej. con su DOI).',
+  {
+    query: z.string().optional().describe('Texto de búsqueda: tema, título, autores. Requerido si no hay doi.'),
+    doi: z.string().optional().describe('DOI exacto (10.xxxx/... o https://doi.org/...). Si se indica, se ignora query.'),
+    source: z.enum(SOURCES).optional().describe('Fuente: auto (OpenAlex y, si falla, Crossref), openalex o crossref. Default auto.'),
+    limit: z.number().int().min(1).max(25).optional().describe('Máximo de resultados (default 10, máx 25).'),
+    yearFrom: z.number().int().min(1000).max(2100).optional().describe('Año de publicación mínimo.'),
+    yearTo: z.number().int().min(1000).max(2100).optional().describe('Año de publicación máximo.'),
+    includeAbstract: z.boolean().optional().describe('Incluir el resumen (recortado) de cada resultado (default false).'),
+    checkLibrary: z.boolean().optional().describe('Comprobar en la biblioteca local si cada resultado ya existe (default true).'),
+  },
+  async (args) => run(async () => {
+    if (!args.doi && !(args.query && args.query.trim())) {
+      throw new Error('Indica query o doi.');
+    }
+    if (args.yearFrom && args.yearTo && args.yearFrom > args.yearTo) {
+      throw new Error('yearFrom no puede ser mayor que yearTo.');
+    }
+    let source, total, results, warnings;
+    if (args.doi) {
+      const found = await externalSearch.lookupDoi(args.doi, { includeAbstract: args.includeAbstract });
+      ({ source } = found);
+      results = [found.result];
+      total = 1;
+      warnings = [];
+    } else {
+      ({ source, total, results, warnings } = await externalSearch.search({
+        query: args.query,
+        source: args.source || 'auto',
+        limit: args.limit,
+        yearFrom: args.yearFrom,
+        yearTo: args.yearTo,
+        includeAbstract: args.includeAbstract,
+      }));
+    }
+
+    if (args.checkLibrary !== false && results.length > 0) {
+      try {
+        const existing = await Promise.all(results.map((r) => zotero.findExisting({ doi: r.doi, title: r.title })));
+        results = results.map((r, i) => ({
+          ...r,
+          inLibrary: existing[i] ? { key: existing[i].key, title: existing[i].title } : null,
+        }));
+      } catch (err) {
+        warnings = [...warnings, `No se pudo comprobar la biblioteca local: ${err.message}`];
+      }
+    }
+
+    const payload = { query: args.doi ? null : args.query, doi: args.doi ?? null, source, total, count: results.length, results };
+    if (warnings.length) payload.warnings = warnings;
+    return ok(payload);
   })
 );
 

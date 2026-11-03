@@ -111,6 +111,40 @@ export class ZoteroClient {
     return data.map(normalizeCslId);
   }
 
+  /**
+   * Busca en la biblioteca un item que ya corresponda a una publicación:
+   * primero por DOI (campo DOI o línea "DOI:" de Extra) y, si no hay DOI o no
+   * coincide, por título exacto (sin distinguir mayúsculas ni puntuación).
+   * @returns {Promise<object|null>} Resumen del item (como search) o null.
+   */
+  async findExisting({ doi, title } = {}) {
+    const cleanDoi = normalizeDoi(doi);
+    if (cleanDoi) {
+      // Entre comillas: sin ellas Zotero busca cada parte del DOI por separado.
+      const items = await this._topSearch(`"${cleanDoi}"`, 'everything');
+      const match = items.find((i) => itemDois(i).includes(cleanDoi));
+      if (match) return itemToSummary(match);
+    }
+    const wanted = normalizeTitle(title);
+    const words = titleSearchWords(title);
+    if (wanted && words) {
+      const items = await this._topSearch(words, 'titleCreatorYear');
+      const match = items.find((i) => normalizeTitle(i.data && i.data.title) === wanted);
+      if (match) return itemToSummary(match);
+    }
+    return null;
+  }
+
+  async _topSearch(q, qmode) {
+    const params = new URLSearchParams();
+    params.set('q', q);
+    params.set('qmode', qmode);
+    params.set('limit', '25');
+    params.set('format', 'json');
+    const data = await this._getJSON(`/users/0/items/top?${params.toString()}`);
+    return Array.isArray(data) ? data : [];
+  }
+
   /** Lista las colecciones de la biblioteca local. */
   async listCollections() {
     const params = new URLSearchParams();
@@ -151,6 +185,62 @@ function normalizeCslId(item) {
     }
   }
   return item;
+}
+
+/**
+ * Normaliza un DOI: sin prefijo doi.org / "doi:", en minúsculas.
+ * @returns {string|null} El DOI (10.xxxx/...) o null si no lo parece.
+ */
+export function normalizeDoi(value) {
+  if (!value) return null;
+  const s = String(value)
+    .trim()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+    .replace(/^doi:\s*/i, '')
+    .toLowerCase();
+  return /^10\.\d{4,9}\/\S+$/.test(s) ? s : null;
+}
+
+/** DOIs de un item de Zotero: el campo DOI y las líneas "DOI: ..." de Extra. */
+function itemDois(item) {
+  const d = (item && item.data) || {};
+  const dois = [normalizeDoi(d.DOI)];
+  for (const m of String(d.extra || '').matchAll(/^\s*DOI:\s*(\S+)/gim)) dois.push(normalizeDoi(m[1]));
+  return dois.filter(Boolean);
+}
+
+function normalizeTitle(title) {
+  if (!title) return '';
+  return String(title)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/<[^>]+>/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/**
+ * Palabras para buscar un título en Zotero: las 6 más largas, sin la
+ * puntuación de los bordes (Zotero exige que aparezcan todas). La coincidencia
+ * exacta se comprueba después con normalizeTitle.
+ */
+function titleSearchWords(title) {
+  if (!title) return '';
+  const words = String(title)
+    .replace(/<[^>]+>/g, ' ')
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    // Solo palabras sin signos internos: un apóstrofo o guion puede escribirse
+    // distinto en Zotero (’ frente a ') y haría fallar la búsqueda.
+    .filter((w) => w.length >= 3 && /^[\p{L}\p{N}]+$/u.test(w));
+  // Primero las palabras ASCII: Zotero (SQLite LIKE) solo ignora mayúsculas
+  // en letras sin acento, y "ÓPTICO" no encontraría "Óptico".
+  const ascii = (w) => (/^[A-Za-z0-9]+$/.test(w) ? 1 : 0);
+  return [...new Set(words)]
+    .sort((a, b) => ascii(b) - ascii(a) || b.length - a.length)
+    .slice(0, 6)
+    .join(' ');
 }
 
 function extractYear(date) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ZoteroClient, ZoteroError } from '../src/zotero-client.js';
+import { ZoteroClient, ZoteroError, normalizeDoi } from '../src/zotero-client.js';
 
 function mockFetch(handler) {
   const original = globalThis.fetch;
@@ -136,6 +136,41 @@ test('status devuelve ok:false sin lanzar cuando Zotero está caído', async () 
     const status = await client.status();
     assert.equal(status.ok, false);
     assert.match(status.error, /No se pudo conectar/);
+  } finally {
+    restore();
+  }
+});
+
+test('normalizeDoi acepta URL y prefijo doi: y rechaza lo que no es DOI', () => {
+  assert.equal(normalizeDoi('https://doi.org/10.1017/S0144686X'), '10.1017/s0144686x');
+  assert.equal(normalizeDoi('doi: 10.1000/ABC'), '10.1000/abc');
+  assert.equal(normalizeDoi('http://dx.doi.org/10.1000/x'), '10.1000/x');
+  assert.equal(normalizeDoi('no es un doi'), null);
+  assert.equal(normalizeDoi(null), null);
+});
+
+test('findExisting encuentra por DOI (también en Extra) y por título', async () => {
+  const calls = [];
+  const restore = mockFetch((url) => {
+    calls.push(url);
+    const q = new URL(url).searchParams.get('q');
+    let body = [];
+    if (q === '"10.1000/ejemplo"') body = [{ key: 'OTRO0001', data: { title: 'Otro', DOI: '10.1000/ejemplo2' } }, SAMPLE_ITEM];
+    if (q === '"10.2000/libro"') body = [{ key: 'LIBRO001', data: { itemType: 'book', title: 'Un libro', extra: 'Tipo: x\nDOI: 10.2000/LIBRO' } }];
+    if (q === 'ejemplo artículo') body = [{ key: 'OTRO0002', data: { title: 'Otro artículo de ejemplo' } }, SAMPLE_ITEM];
+    return { ok: true, json: async () => body };
+  });
+  try {
+    const client = new ZoteroClient();
+    assert.equal((await client.findExisting({ doi: 'https://doi.org/10.1000/EJEMPLO' })).key, 'ABC12345');
+    assert.ok(calls[0].includes('/users/0/items/top?'));
+    assert.ok(calls[0].includes('qmode=everything'));
+    assert.equal((await client.findExisting({ doi: '10.2000/libro' })).key, 'LIBRO001');
+    // Sin DOI coincidente, cae al título (sin distinguir mayúsculas ni puntuación).
+    assert.equal((await client.findExisting({ doi: '10.9999/nada', title: 'Un artículo de ejemplo!' })).key, 'ABC12345');
+    assert.ok(calls.at(-1).includes('qmode=titleCreatorYear'));
+    assert.equal(await client.findExisting({ title: 'Inexistente' }), null);
+    assert.equal(await client.findExisting({}), null);
   } finally {
     restore();
   }

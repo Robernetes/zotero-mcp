@@ -17,10 +17,11 @@ agy plugin install https://github.com/Robernetes/zotero-mcp
 - **Answer questions about your library**: search for sources on a topic, filter by type (articles, books, theses) or collection, and get full details of any item (abstract, authors, year, URL, DOI).
 - **Cite correctly**: generate in-text citations with the right style (APA, MLA, Chicago, Harvard, IEEE, Vancouver) and language (es-ES, en-US), with page locators (`(Author, 2020, p. 15)`), prefixes and suffixes.
 - **Write academic documents with real references**: the AI inserts citations and keeps the bibliography synced: add citations with `zotero_cite` and the document's references section regenerates with `zotero_bibliography`.
+- **Find new sources**: search outside your library (OpenAlex and Crossref) by topic, title, author or DOI, and see which results are already in your library.
 - **Verify sources**: never invents references; every item is validated against Zotero before citing.
 - **Diagnostics**: `zotero_status` tells you whether Zotero is available.
 
-**Limits (v1):** read-only access to the Zotero library (cannot add/edit/delete items).
+**Limits:** read-only access to the Zotero library (cannot add/edit/delete items). Results from the external search must be added to Zotero by you (e.g. with *Add Item by Identifier* and the DOI) before they can be cited.
 
 ## Requirements
 
@@ -54,6 +55,8 @@ The server works out of the box (default values). Optional variables
 | `ZOTERO_DEFAULT_STYLE` | `apa` | Default CSL style |
 | `ZOTERO_LOCALE` | `es-ES` | Default style locale |
 | `ZOTERO_MCP_BACKUP` | `true` | Copy the document to `<file>.bak` before overwriting it (`false` to disable) |
+| `OPENALEX_API_KEY` | (empty) | Free [OpenAlex API key](https://openalex.org/settings/api) for `zotero_find_external`. Without it, the free daily quota is shared by everyone on your IP; when it runs out, the search falls back to Crossref |
+| `ZOTERO_MCP_CONTACT_EMAIL` | (empty) | Contact email sent to OpenAlex and Crossref (their "polite pool": faster, more stable responses). Nothing is sent if empty |
 
 Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + rename), are refused if the file changed on disk since it was read, and are serialized per file, so parallel calls do not overwrite each other. The `.bak` keeps only the previous version.
 
@@ -70,6 +73,7 @@ Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + re
 | `zotero_read_docx` | Read paragraphs from a `.docx` (index, text, whether it already has Zotero fields). |
 | `zotero_insert_citation_docx` | Insert an `ADDIN ZOTERO_ITEM CSL_CITATION` field at the end of a paragraph in a `.docx`. |
 | `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx` (one paragraph per reference). |
+| `zotero_find_external` | Search publications **outside** the library in OpenAlex/Crossref (`query` or `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` tells whether each one is already in Zotero. |
 
 ## Usage examples (JSON)
 
@@ -201,6 +205,15 @@ The citation is inserted as an `ADDIN ZOTERO_ITEM CSL_CITATION` field with the i
 2. For each citation: `zotero_insert_citation_docx` at the correct paragraph.
 3. `zotero_update_bibliography_docx` → adds/updates the BIBL field at the end.
 
+### 10. Search outside your library
+
+```json
+{ "tool": "zotero_find_external", "args": { "query": "older adults technology adoption", "yearFrom": 2018, "limit": 5 } }
+{ "tool": "zotero_find_external", "args": { "doi": "10.1017/S0144686X19000230", "includeAbstract": true } }
+```
+
+Each result includes `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` and `inLibrary` (`{ key, title }` if the item is already in Zotero, matched by DOI or exact title; `null` otherwise). With `source: "auto"` (default) it uses OpenAlex and falls back to Crossref if OpenAlex fails; a DOI is looked up in Crossref and then OpenAlex. Nothing is saved to Zotero.
+
 ## Included skill
 
 `zotero-research` teaches the agent when and how to use each tool (search, citation and
@@ -216,6 +229,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 ## Security
 
 - **Read-only** access to the Zotero library: the MCP does not add, edit or delete items.
+- `zotero_find_external` only sends the search text or DOI to OpenAlex/Crossref (plus `OPENALEX_API_KEY` and `ZOTERO_MCP_CONTACT_EMAIL` if you set them); never the content of your documents or library.
 - The only write operations are the **references section** of Markdown files and **Zotero fields** in Word files (.docx), and only with explicit `apply: true`.
 - No secrets in the repository; credentials (if any) go through environment variables.
 - Parameter validation, connection timeout (8 s) and file size limit (2 MB).
@@ -233,6 +247,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 | "The file changed since it was read" | The document was edited or saved while the tool was running | Run the tool again so it works on the latest version. |
 | "No references to write: the citation registry is empty" | The in-memory registry was lost (server restart or style/locale change) | Cite again with `zotero_cite` or pass explicit `keys`. The file is not modified. |
 | "The new bibliography has N references and the current section M" | The new list is shorter than the existing one (partial registry) | Review the `diff` from the dry run and repeat with `force: true` if you really want to replace it. |
+| `zotero_find_external` → "OpenAlex: HTTP 429, free daily quota used up" | The shared OpenAlex quota for your IP ran out | With `source: "auto"` it already falls back to Crossref; for your own quota set `OPENALEX_API_KEY`. |
 | Numeric citations "reset" | Style changed mid-document | Use the same `style`/`locale` throughout the document (changing style resets numbering). |
 
 ## Development

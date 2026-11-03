@@ -17,10 +17,11 @@ agy plugin install https://github.com/Robernetes/zotero-mcp
 - **Responder preguntas sobre tu biblioteca**: buscar fuentes sobre un tema, filtrar por tipo (artículos, libros, tesis) o por colección, y obtener el detalle completo de cualquier item (resumen, autores, año, URL, DOI).
 - **Citar correctamente**: generar citas en texto con el estilo correcto (APA, MLA, Chicago, Harvard, IEEE, Vancouver) e idioma (es-ES, en-US), con localizador de página (`(Autor, 2020, p. 15)`), prefijos y sufijos.
 - **Redactar documentos académicos con referencias reales**: la IA inserta las citas y mantiene la bibliografía sincronizada: añade citas con `zotero_cite` y la sección de referencias del documento se regenera sola con `zotero_bibliography`.
+- **Encontrar fuentes nuevas**: buscar fuera de tu biblioteca (OpenAlex y Crossref) por tema, título, autor o DOI, y ver cuáles de los resultados ya están en tu biblioteca.
 - **Verificar fuentes**: nunca inventa referencias; todo item se valida contra Zotero antes de citar.
 - **Diagnosticar**: `zotero_status` indica si Zotero está disponible.
 
-**Límites (v1):** solo lectura sobre la librería de Zotero (no agrega/edita/borra items).
+**Límites:** solo lectura sobre la librería de Zotero (no agrega/edita/borra items). Los resultados de la búsqueda externa los añades tú a Zotero (p. ej. con *Añadir elemento por identificador* y el DOI) antes de poder citarlos.
 
 ## Requisitos
 
@@ -54,6 +55,8 @@ El servidor funciona sin configuración (usa los valores por defecto). Variables
 | `ZOTERO_DEFAULT_STYLE` | `apa` | Estilo CSL por defecto |
 | `ZOTERO_LOCALE` | `es-ES` | Idioma por defecto del estilo |
 | `ZOTERO_MCP_BACKUP` | `true` | Copiar el documento a `<archivo>.bak` antes de sobrescribirlo (`false` para desactivarlo) |
+| `OPENALEX_API_KEY` | (vacío) | [API key gratuita de OpenAlex](https://openalex.org/settings/api) para `zotero_find_external`. Sin ella, la cuota diaria gratuita se comparte con todos los de tu IP; si se agota, la búsqueda pasa a Crossref |
+| `ZOTERO_MCP_CONTACT_EMAIL` | (vacío) | Correo de contacto que se envía a OpenAlex y Crossref (su "polite pool": respuestas más rápidas y estables). Si está vacío no se envía nada |
 
 Las escrituras en `.md`/`.docx` son atómicas (archivo temporal en la misma carpeta + renombrado), se rechazan si el archivo cambió en disco desde que se leyó y se serializan por archivo, de modo que las llamadas en paralelo no se pisan. El `.bak` conserva solo la versión anterior.
 
@@ -70,6 +73,7 @@ Las escrituras en `.md`/`.docx` son atómicas (archivo temporal en la misma carp
 | `zotero_read_docx` | Lee los párrafos de un `.docx` (índice, texto, si ya tiene campos Zotero). |
 | `zotero_insert_citation_docx` | Inserta un campo `ADDIN ZOTERO_ITEM CSL_CITATION` al final de un párrafo en un `.docx`. |
 | `zotero_update_bibliography_docx` | Inserta o actualiza el campo `ADDIN ZOTERO_BIBL` en un `.docx` (un párrafo por referencia). |
+| `zotero_find_external` | Busca publicaciones **fuera** de la biblioteca en OpenAlex/Crossref (`query` o `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` indica si cada una ya está en Zotero. |
 
 ## Ejemplos de uso (JSON)
 
@@ -201,6 +205,15 @@ La cita se inserta como campo `ADDIN ZOTERO_ITEM CSL_CITATION` con el CSL JSON d
 2. Para cada cita: `zotero_insert_citation_docx` en el párrafo correcto.
 3. `zotero_update_bibliography_docx` → añade/actualiza el campo BIBL al final.
 
+### 10. Buscar fuera de tu biblioteca
+
+```json
+{ "tool": "zotero_find_external", "args": { "query": "adultos mayores adopción de tecnología", "yearFrom": 2018, "limit": 5 } }
+{ "tool": "zotero_find_external", "args": { "doi": "10.1017/S0144686X19000230", "includeAbstract": true } }
+```
+
+Cada resultado trae `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` e `inLibrary` (`{ key, title }` si el item ya está en Zotero, por DOI o por título exacto; `null` si no). Con `source: "auto"` (por defecto) usa OpenAlex y, si falla, Crossref; un DOI se busca en Crossref y luego en OpenAlex. No guarda nada en Zotero.
+
 ## Skill incluida
 
 `zotero-research` enseña al agente cuándo y cómo usar cada herramienta (búsqueda, citación y
@@ -216,6 +229,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 ## Seguridad
 
 - **Solo lectura** sobre la librería de Zotero: el MCP no agrega, edita ni borra items.
+- `zotero_find_external` solo envía a OpenAlex/Crossref el texto buscado o el DOI (y `OPENALEX_API_KEY` y `ZOTERO_MCP_CONTACT_EMAIL` si los configuras); nunca el contenido de tus documentos ni de tu biblioteca.
 - La única escritura es la **sección de referencias** de archivos Markdown y los **campos Zotero** en archivos Word (.docx), y solo con `apply: true` explícito.
 - Sin secretos en el repositorio; las credenciales (si las hubiera) van por variables de entorno.
 - Validación de parámetros, timeout de conexión (8 s) y límite de tamaño de archivo (2 MB).
