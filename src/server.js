@@ -20,7 +20,8 @@ import {
   buildCitationRuns,
   insertCitationAtParagraph,
   upsertBibliography,
-  listCitedItems,
+  listDocumentCitations,
+  paragraphChildIndex,
   hashCode,
   validateDocxPath,
 } from './docx.js';
@@ -56,6 +57,40 @@ async function run(handler) {
   } catch (err) {
     return fail(err && err.message ? err.message : String(err));
   }
+}
+
+const CITATION_ITEM_FIELDS = ['locator', 'label', 'prefix', 'suffix'];
+
+/**
+ * Resuelve los datos CSL de las citas de un .docx (de listDocumentCitations):
+ * usa el itemData incrustado en cada campo y, si falta, busca la key en Zotero.
+ * El id de cada item es su key de Zotero (o `doc-<id>` si el campo no tiene URI).
+ * @returns {Promise<{itemsById: Map<string, object>, clusters: Array<Array<object>>, unresolved: string[]}>}
+ *   clusters: una lista de citationItems ({id, locator, …}) por cita, en orden.
+ */
+async function resolveDocumentCitations(citations) {
+  const idOf = (i) => i.key || `doc-${i.itemData.id}`;
+  const itemsById = new Map();
+  for (const i of citations.flatMap((c) => c.items)) {
+    const id = idOf(i);
+    if (i.itemData && !itemsById.has(id)) itemsById.set(id, { ...i.itemData, id });
+  }
+  const toFetch = [
+    ...new Set(citations.flatMap((c) => c.items).filter((i) => !itemsById.has(idOf(i))).map((i) => i.key)),
+  ];
+  for (const item of toFetch.length > 0 ? await zotero.getByKeys(toFetch) : []) {
+    itemsById.set(String(item.id), item);
+  }
+  const unresolved = new Set();
+  const clusters = citations.map((c) =>
+    c.items.map((i) => {
+      const ci = { id: idOf(i) };
+      for (const f of CITATION_ITEM_FIELDS) if (i[f] != null) ci[f] = i[f];
+      if (!itemsById.has(ci.id)) unresolved.add(i.key);
+      return ci;
+    })
+  );
+  return { itemsById, clusters, unresolved: [...unresolved] };
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +168,7 @@ server.tool(
     label: z.string().optional().describe('Etiqueta del localizador: page, chapter, section, figure, volume, ...'),
     prefix: z.string().optional().describe('Texto antes de la cita.'),
     suffix: z.string().optional().describe('Texto después de la cita.'),
-    register: z.boolean().optional().describe('Registrar la cita para la bibliografía automática (default true).'),
+    register: z.boolean().optional().describe('Registrar la cita para la bibliografía automática (default true). Con false solo devuelve el texto: el registro no cambia.'),
   },
   async (args) => run(async () => {
     const result = await citationManager.cite({
@@ -204,49 +239,49 @@ server.tool(
       const oldEntries = countReferenceEntries(oldSection || '');
       const result = updateBibliographySection(original, bib.bibliography, {
         createSection: args.createSection === true,
-    });
+      });
 
-    if (!result.applied) {
-      return fail(
-        `${result.reason || 'No se encontró una sección de referencias.'} Pasa createSection: true para crearla al final del documento.`
-      );
-    }
-
-    const payload = {
-      ...bib,
-      style,
-      locale,
-      filePath: abs,
-      sectionFound: result.sectionFound,
-      heading: result.heading,
-      apply: args.apply === true,
-      dryRun: args.apply !== true,
-      oldSection: oldSection || '',
-      oldEntries,
-      newEntries: bib.count,
-      // Diff del documento completo (no solo de la sección), para que el dryRun
-      // muestre cualquier línea que se fuera a perder fuera de las referencias.
-      diff: result.text === original ? null : simpleDiff(original, result.text),
-    };
-
-    // Una bibliografía con menos referencias que la actual probablemente viene de
-    // un registro parcial; solo se escribe si se pide explícitamente con force.
-    if (bib.count < oldEntries && args.force !== true) {
-      payload.warning =
-        `La nueva bibliografía tiene ${bib.count} referencias y la sección actual ${oldEntries}. ` +
-        'Revisa el diff y repite con force: true si quieres reemplazarla.';
-      if (args.apply === true) {
-        return fail(`${payload.warning} No se modificó el archivo.`);
+      if (!result.applied) {
+        return fail(
+          `${result.reason || 'No se encontró una sección de referencias.'} Pasa createSection: true para crearla al final del documento.`
+        );
       }
-    }
 
-    if (args.apply === true && result.text !== original) {
-      const { backupPath } = writeFileAtomic(abs, result.text, { expected: fingerprint, backup: BACKUP });
-      payload.written = true;
-      if (backupPath) payload.backupPath = backupPath;
-    }
+      const payload = {
+        ...bib,
+        style,
+        locale,
+        filePath: abs,
+        sectionFound: result.sectionFound,
+        heading: result.heading,
+        apply: args.apply === true,
+        dryRun: args.apply !== true,
+        oldSection: oldSection || '',
+        oldEntries,
+        newEntries: bib.count,
+        // Diff del documento completo (no solo de la sección), para que el dryRun
+        // muestre cualquier línea que se fuera a perder fuera de las referencias.
+        diff: result.text === original ? null : simpleDiff(original, result.text),
+      };
 
-    return ok(payload);
+      // Una bibliografía con menos referencias que la actual probablemente viene de
+      // un registro parcial; solo se escribe si se pide explícitamente con force.
+      if (bib.count < oldEntries && args.force !== true) {
+        payload.warning =
+          `La nueva bibliografía tiene ${bib.count} referencias y la sección actual ${oldEntries}. ` +
+          'Revisa el diff y repite con force: true si quieres reemplazarla.';
+        if (args.apply === true) {
+          return fail(`${payload.warning} No se modificó el archivo.`);
+        }
+      }
+
+      if (args.apply === true && result.text !== original) {
+        const { backupPath } = writeFileAtomic(abs, result.text, { expected: fingerprint, backup: BACKUP });
+        payload.written = true;
+        if (backupPath) payload.backupPath = backupPath;
+      }
+
+      return ok(payload);
     });
   })
 );
@@ -273,7 +308,7 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   'zotero_insert_citation_docx',
-  'Inserta un campo de cita Zotero (ADDIN ZOTERO_ITEM CSL_CITATION) al final del párrafo indicado en un documento Word. La cita se renderizará correctamente al abrir el archivo en Word con el plugin de Zotero. Usa siempre el mismo style y locale en todo el documento.',
+  'Inserta un campo de cita Zotero (ADDIN ZOTERO_ITEM CSL_CITATION) al final del párrafo indicado en un documento Word. El texto de la cita (numeración, desambiguación) se calcula con las citas que ya contiene el documento, no con las de zotero_cite. La cita se renderizará correctamente al abrir el archivo en Word con el plugin de Zotero. Usa siempre el mismo style y locale en todo el documento.',
   {
     filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
     key: z.string().min(1).describe('Key del item de Zotero.'),
@@ -299,21 +334,39 @@ server.tool(
       return fail(`No se encontró en Zotero un item con key "${key}". Verifícala con zotero_search.`);
     }
 
-    // Generar el texto renderizado de la cita.
-    const citeResult = await citationManager.cite({
-      key,
-      style,
-      locale,
-      locator: args.locator,
-      label: args.label,
-      prefix: args.prefix,
-      suffix: args.suffix,
-      register: false,
-    });
-
-    // Abrir el docx y calcular noteIndex (en exclusiva sobre el archivo hasta guardar).
+    // Abrir el docx (en exclusiva sobre el archivo hasta guardar).
     return withFileLock(abs, async () => {
       const ctx = await openDocx(abs);
+      const insertAt = paragraphChildIndex(ctx.doc, args.paragraphIndex);
+      if (insertAt < 0) {
+        return fail(
+          `No existe el párrafo ${args.paragraphIndex} (el documento tiene ${readParagraphs(ctx).length} párrafos). Usa zotero_read_docx para ver la estructura.`
+        );
+      }
+
+      // El texto de la cita se calcula con las citas que ya contiene el documento
+      // (antes y después del párrafo), no con el registro en memoria del servidor:
+      // así la numeración y la desambiguación ("2020a") son las del documento.
+      const citations = listDocumentCitations(ctx.doc);
+      const resolved = await resolveDocumentCitations(citations);
+      resolved.itemsById.set(key, cslItem); // datos recién obtenidos de Zotero
+      const before = [];
+      const after = [];
+      citations.forEach((c, i) => {
+        const cluster = resolved.clusters[i].filter((ci) => resolved.itemsById.has(ci.id));
+        if (cluster.length > 0) (c.startChild <= insertAt ? before : after).push(cluster);
+      });
+      const citeResult = citationManager.renderCitation({
+        style,
+        locale,
+        items: [...resolved.itemsById.values()],
+        before,
+        citationItems: [
+          { id: key, locator: args.locator, label: args.label, prefix: args.prefix, suffix: args.suffix },
+        ],
+        after,
+      });
+
       const existingCount = countExistingCitations(ctx);
       const noteIndex = existingCount + 1;
       const citationID = `CITE-${noteIndex}`;
@@ -336,30 +389,35 @@ server.tool(
         label: args.label,
         prefix: args.prefix,
         suffix: args.suffix,
-    });
+      });
 
-    insertCitationAtParagraph(ctx.doc, args.paragraphIndex, runs);
+      insertCitationAtParagraph(ctx.doc, args.paragraphIndex, runs);
 
-    const payload = {
-      filePath: abs,
-      key,
-      paragraphIndex: args.paragraphIndex,
-      citationID,
-      noteIndex,
-      style,
-      locale,
-      citation: citeResult.citation,
-      apply: args.apply === true,
-      dryRun: args.apply !== true,
-    };
+      const payload = {
+        filePath: abs,
+        key,
+        paragraphIndex: args.paragraphIndex,
+        citationID,
+        noteIndex,
+        style,
+        locale,
+        citation: citeResult.citation,
+        citationsInDocument: citations.length,
+        apply: args.apply === true,
+        dryRun: args.apply !== true,
+      };
+      if (resolved.unresolved.length > 0) {
+        payload.warning =
+          `Algunas citas del documento no se pudieron resolver (${resolved.unresolved.join(', ')}) y no se tuvieron en cuenta para numerar o desambiguar esta cita; el plugin de Zotero la corregirá al refrescar.`;
+      }
 
-    if (args.apply === true) {
-      const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
-      payload.written = true;
-      if (backupPath) payload.backupPath = backupPath;
-    }
+      if (args.apply === true) {
+        const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
+        payload.written = true;
+        if (backupPath) payload.backupPath = backupPath;
+      }
 
-    return ok(payload);
+      return ok(payload);
     });
   })
 );
@@ -386,56 +444,48 @@ server.tool(
 
       // Las referencias salen de las citas Zotero del propio documento: se usa el
       // itemData incrustado en cada campo y, si falta, se busca la key en Zotero.
-      const cited = listCitedItems(ctx.doc);
-      if (cited.length === 0) {
+      const citations = listDocumentCitations(ctx.doc);
+      if (citations.length === 0) {
         return fail(
           'El documento no contiene citas de Zotero. Inserta citas con zotero_insert_citation_docx antes de generar la bibliografía.'
         );
       }
-      const toFetch = [...new Set(cited.filter((c) => !c.itemData && c.key).map((c) => c.key))];
-      const fetched = toFetch.length > 0 ? await zotero.getByKeys(toFetch) : [];
-      const fetchedByKey = new Map(fetched.map((item) => [String(item.id), item]));
-      const items = [];
-      const unresolved = [];
-      for (const c of cited) {
-        if (c.itemData) items.push({ ...c.itemData, id: c.key || `doc-${c.itemData.id}` });
-        else if (fetchedByKey.has(c.key)) items.push(fetchedByKey.get(c.key));
-        else unresolved.push(c.key);
-      }
-      if (unresolved.length > 0) {
+      const resolved = await resolveDocumentCitations(citations);
+      if (resolved.unresolved.length > 0) {
         return fail(
-          `No se pudieron resolver en Zotero las citas del documento con key: ${[...new Set(unresolved)].join(', ')}.`
+          `No se pudieron resolver en Zotero las citas del documento con key: ${resolved.unresolved.join(', ')}.`
         );
       }
+      const items = resolved.clusters.flat().map((ci) => resolved.itemsById.get(ci.id));
 
       const bib = await citationManager.bibliography({
         style,
         locale: DEFAULT_LOCALE,
         items,
         format: 'plaintext',
-    });
+      });
 
-    const result = upsertBibliography(ctx.doc, styleUrl, bib.bibliography);
+      const result = upsertBibliography(ctx.doc, styleUrl, bib.bibliography);
 
-    const payload = {
-      filePath: abs,
-      style,
-      styleUrl,
-      citationsInDocument: cited.length,
-      entries: bib.count,
-      ...result,
-      apply: args.apply === true,
-      dryRun: args.apply !== true,
-    };
-    if (bib.bibliography) payload.bibliography = bib.bibliography;
+      const payload = {
+        filePath: abs,
+        style,
+        styleUrl,
+        citationsInDocument: citations.length,
+        entries: bib.count,
+        ...result,
+        apply: args.apply === true,
+        dryRun: args.apply !== true,
+      };
+      if (bib.bibliography) payload.bibliography = bib.bibliography;
 
-    if (args.apply === true) {
-      const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
-      payload.written = true;
-      if (backupPath) payload.backupPath = backupPath;
-    }
+      if (args.apply === true) {
+        const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
+        payload.written = true;
+        if (backupPath) payload.backupPath = backupPath;
+      }
 
-    return ok(payload);
+      return ok(payload);
     });
   })
 );

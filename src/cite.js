@@ -75,13 +75,14 @@ export class CitationManager {
     return readFileSync(path.join(this.localesDir, `locales-${locale}.xml`), 'utf8');
   }
 
-  _buildEngine(style, locale) {
+  /** Motor citeproc que resuelve los items desde `itemCache` (por defecto, la caché del manager). */
+  _buildEngine(style, locale, itemCache = this.itemCache) {
     const styleXml = this._loadStyle(style);
     const localeXml = this._loadLocale(locale);
     const sys = {
       retrieveLocale: () => localeXml,
       retrieveItem: (id) => {
-        const item = this.itemCache.get(String(id));
+        const item = itemCache.get(String(id));
         if (!item) {
           throw new Error(`El item "${id}" no está disponible en el registro de citas.`);
         }
@@ -124,6 +125,8 @@ export class CitationManager {
 
   /**
    * Genera una cita textual para un item.
+   * Con `register: false` la cita se calcula en un motor temporal (con las citas
+   * ya registradas como contexto) y el registro no cambia en absoluto.
    * @returns {Promise<{citation: string, style: string, locale: string, itemKey: string, registered: boolean}>}
    */
   async cite({ key, style = 'apa', locale = 'es-ES', locator, label, prefix, suffix, register = true } = {}) {
@@ -136,20 +139,25 @@ export class CitationManager {
         `No se encontró en Zotero un item con key "${key}". Verifica la key con zotero_search o zotero_get_item.`
       );
     }
-    const state = this._ensureState(styleName, localeName);
-    const citation = {
-      citationID: `CITE-${++state.noteIndex}`,
-      citationItems: [{ id: key, locator, label, prefix, suffix }],
-      properties: { noteIndex: state.noteIndex },
-    };
-    if (register) state.citationList.push(citation);
-    // citeproc-js espera las citas previas como pares [citationID, noteIndex].
-    const pre = register
-      ? toPreList(state.citationList.slice(0, -1))
-      : toPreList(state.citationList);
-    const out = state.engine.processCitationCluster(citation, pre, [], 'citation');
-    // citeproc devuelve HTML (p. ej. "&#38;" para "&"); se entrega texto plano.
-    const rendered = htmlToText(extractCitationText(out));
+    const citationItem = { id: key, locator, label, prefix, suffix };
+    let rendered;
+    if (register) {
+      const state = this._ensureState(styleName, localeName);
+      const citation = {
+        citationID: `CITE-${++state.noteIndex}`,
+        citationItems: [citationItem],
+        properties: { noteIndex: state.noteIndex },
+      };
+      const pre = toPreList(state.citationList);
+      state.citationList.push(citation);
+      const out = state.engine.processCitationCluster(citation, pre, [], 'citation');
+      rendered = extractCitationText(out, pre.length);
+    } else {
+      // Contexto: las citas registradas, solo si son del mismo style/locale.
+      const sameState = this.state && this.state.style === styleName && this.state.locale === localeName;
+      const before = sameState ? this.state.citationList.map((c) => c.citationItems) : [];
+      rendered = this._renderCluster(styleName, localeName, this.itemCache, before, [citationItem], []);
+    }
     return {
       citation: rendered,
       style: styleName,
@@ -197,30 +205,56 @@ export class CitationManager {
     return this._render(state.engine, outputFormat, 'registro');
   }
 
+  /**
+   * Cita textual calculada en un motor temporal a partir de items ya resueltos,
+   * sin consultar Zotero ni tocar el registro. Pensado para documentos que
+   * llevan sus propias citas (p. ej. un .docx).
+   * @param {object} opts
+   * @param {object[]} opts.items Items CSL JSON (id = el que usan las citas).
+   * @param {Array<Array<object>>} [opts.before] Citas del documento anteriores a la nueva,
+   *   cada una como lista de citationItems ({id, locator, label, prefix, suffix}).
+   * @param {Array<object>} opts.citationItems La cita nueva.
+   * @param {Array<Array<object>>} [opts.after] Citas del documento posteriores a la nueva.
+   * @returns {{citation: string, style: string, locale: string}}
+   */
+  renderCitation({ style = 'apa', locale = 'es-ES', items, before = [], citationItems, after = [] } = {}) {
+    const styleName = this._normalizeStyle(style);
+    const localeName = this._normalizeLocale(locale);
+    const cache = new Map();
+    for (const item of items || []) {
+      if (item && item.id != null) cache.set(String(item.id), item);
+    }
+    const missing = [...before, citationItems, ...after]
+      .flat()
+      .filter((ci) => ci && !cache.has(String(ci.id)))
+      .map((ci) => ci.id);
+    if (missing.length > 0) {
+      throw new Error(`Faltan los datos de los items: ${[...new Set(missing)].join(', ')}.`);
+    }
+    const citation = this._renderCluster(styleName, localeName, cache, before, citationItems, after);
+    return { citation, style: styleName, locale: localeName };
+  }
+
+  /** Registra `before` y `after` en un motor temporal y devuelve el texto de la cita nueva. */
+  _renderCluster(styleName, localeName, itemCache, before, citationItems, after) {
+    const engine = this._buildEngine(styleName, localeName, itemCache);
+    const existing = processInOrder(engine, [...before, ...after], 'DOC');
+    const pre = existing.slice(0, before.length);
+    const post = existing.slice(before.length);
+    const citation = {
+      citationID: 'NEW',
+      citationItems: citationItems.map((ci) => ({ ...ci, id: String(ci.id) })),
+      properties: { noteIndex: before.length + 1 },
+    };
+    const out = engine.processCitationCluster(citation, pre, post, 'citation');
+    return extractCitationText(out, pre.length);
+  }
+
   /** Bibliografía con un motor temporal: cita las keys en orden sin tocar el registro. */
   _renderOrdered(keys, itemCache, styleName, localeName, format, source) {
-    const temp = new CitationManager({
-      fetchItems: this.fetchItems,
-      stylesDir: this.stylesDir,
-      localesDir: this.localesDir,
-    });
-    temp.itemCache = itemCache;
-    const tempState = temp._ensureState(styleName, localeName);
-    for (const k of keys) {
-      const citation = {
-        citationID: `TEMP-${++tempState.noteIndex}`,
-        citationItems: [{ id: String(k) }],
-        properties: { noteIndex: tempState.noteIndex },
-      };
-      tempState.citationList.push(citation);
-      tempState.engine.processCitationCluster(
-        citation,
-        toPreList(tempState.citationList.slice(0, -1)),
-        [],
-        'citation'
-      );
-    }
-    return this._render(tempState.engine, format, source);
+    const engine = this._buildEngine(styleName, localeName, itemCache);
+    processInOrder(engine, keys.map((k) => [{ id: String(k) }]), 'TEMP');
+    return this._render(engine, format, source);
   }
 
   _render(engine, format, source) {
@@ -245,19 +279,41 @@ function toPreList(citationList) {
   return (citationList || []).map((c) => [c.citationID, c.properties.noteIndex]);
 }
 
-// processCitationCluster devuelve [return_data, ret] donde ret es una lista
-// de pares [índice, texto]; el texto de la cita es la concatenación de los pares.
-function extractCitationText(out) {
+/**
+ * Registra en el motor una lista de citas (cada una, lista de citationItems)
+ * en orden y devuelve sus pares [citationID, noteIndex].
+ */
+function processInOrder(engine, clusters, idPrefix) {
+  const done = [];
+  clusters.forEach((citationItems, i) => {
+    const citation = {
+      citationID: `${idPrefix}-${i + 1}`,
+      citationItems: citationItems.map((ci) => ({ ...ci, id: String(ci.id) })),
+      properties: { noteIndex: i + 1 },
+    };
+    engine.processCitationCluster(citation, done.slice(), [], 'citation');
+    done.push([citation.citationID, citation.properties.noteIndex]);
+  });
+  return done;
+}
+
+// processCitationCluster devuelve [return_data, ret]: ret es una lista de pares
+// [índice, texto] con la cita nueva y las ya existentes que cambiaron (p. ej. al
+// desambiguar "2020a"/"2020b"). Se toma solo el par de la cita nueva (`index`)
+// y se devuelve como texto plano: citeproc genera HTML ("&#38;" para "&").
+function extractCitationText(out, index) {
+  let html = '';
   if (Array.isArray(out)) {
     if (Array.isArray(out[1])) {
-      return out[1]
-        .map((pair) => (Array.isArray(pair) ? String(pair[1] ?? '') : ''))
-        .join('');
-    }
-    if (typeof out[1] === 'string') return out[1];
-    if (typeof out[0] === 'string') return out[0];
+      const pairs = out[1].filter(Array.isArray);
+      const own = pairs.find((pair) => pair[0] === index);
+      html = own ? String(own[1] ?? '') : pairs.map((pair) => String(pair[1] ?? '')).join('');
+    } else if (typeof out[1] === 'string') html = out[1];
+    else if (typeof out[0] === 'string') html = out[0];
+  } else if (typeof out === 'string') {
+    html = out;
   }
-  return typeof out === 'string' ? out : '';
+  return htmlToText(html);
 }
 
 function htmlToText(html) {

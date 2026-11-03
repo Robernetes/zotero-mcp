@@ -59,6 +59,8 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` al final del párrafo indicado.
 3. El campo incluye el CSL JSON del item para que Zotero pueda renderizarlo sin conexión.
 4. `noteIndex` y `citationID` se asignan automáticamente por orden de inserción.
+5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después del párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
+6. Las citas ya insertadas no se reescriben: si una cita nueva cambia la numeración o la desambiguación de las anteriores, el plugin de Zotero las actualiza al pulsar *Refresh* en Word.
 
 ### Actualizar la bibliografía
 

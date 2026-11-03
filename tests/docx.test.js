@@ -14,6 +14,8 @@ import {
   countExistingCitations,
   countMaxId,
   listCitedItems,
+  listDocumentCitations,
+  paragraphChildIndex,
   buildCitationRuns,
   insertCitationAtParagraph,
   findBibliographyField,
@@ -300,4 +302,30 @@ test('hashCode produce enteros no negativos', () => {
   assert.ok(Number.isInteger(h));
   assert.ok(h >= 0);
   assert.equal(hashCode('ABC12345'), hashCode('ABC12345'));
+});
+
+test('listDocumentCitations agrupa por campo con posición y localizador', async () => {
+  const ctx = await load(
+    docXml(
+      `<w:p>${citationField('{"citationID":"a","citationItems":[{"id":1,"uris":["http://zotero.org/users/0/items/AAAA1111"],"locator":"12","label":"page"},{"id":2,"uris":["http://zotero.org/users/0/items/BBBB2222"]}]}')}</w:p>` +
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>tabla</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+        '<w:p><w:r><w:t>Sin citas.</w:t></w:r></w:p>' +
+        `<w:p>${citationField('{"citationID":"b","citationItems":[{"id":3,"itemData":{"id":3,"title":"C"}}]}')}</w:p>`
+    )
+  );
+  const citations = listDocumentCitations(ctx.doc);
+  assert.deepEqual(citations, [
+    {
+      startChild: 0,
+      items: [
+        { key: 'AAAA1111', itemData: null, locator: '12', label: 'page' },
+        { key: 'BBBB2222', itemData: null },
+      ],
+    },
+    { startChild: 3, items: [{ key: null, itemData: { id: 3, title: 'C' } }] },
+  ]);
+  // Párrafos de primer nivel: 0 → hijo 0, 1 → hijo 2 (la tabla es el hijo 1), 2 → hijo 3.
+  assert.equal(paragraphChildIndex(ctx.doc, 1), 2);
+  assert.equal(paragraphChildIndex(ctx.doc, 2), 3);
+  assert.equal(paragraphChildIndex(ctx.doc, 9), -1);
 });

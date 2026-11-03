@@ -200,14 +200,17 @@ export function countMaxId({ doc }) {
 }
 
 /**
- * Items citados en el documento, en orden de aparición (con repeticiones).
+ * Citas Zotero del documento en orden, una por campo, con sus items.
  * `key` sale de la URI de Zotero (…/items/KEY); `itemData` es el CSL JSON
- * incrustado en el campo, si lo hay.
- * @returns {Array<{key: string|null, itemData: object|null}>}
+ * incrustado en el campo, si lo hay. `startChild` es el índice en w:body
+ * donde empieza el campo (para saber qué citas van antes de un párrafo).
+ * @returns {Array<{startChild: number, items: Array<{key: string|null, itemData: object|null,
+ *   locator?: string, label?: string, prefix?: string, suffix?: string}>}>}
  */
-export function listCitedItems(doc) {
+export function listDocumentCitations(doc) {
   const out = [];
-  for (const { data } of zoteroCitations(doc)) {
+  for (const { data, startChild } of zoteroCitations(doc)) {
+    const items = [];
     for (const item of (data && data.citationItems) || []) {
       if (!item) continue;
       const uris = Array.isArray(item.uris) ? item.uris : item.uri ? [].concat(item.uri) : [];
@@ -220,10 +223,28 @@ export function listCitedItems(doc) {
         }
       }
       const itemData = item.itemData && typeof item.itemData === 'object' ? item.itemData : null;
-      if (key || itemData) out.push({ key, itemData });
+      if (!key && !itemData) continue;
+      const entry = { key, itemData };
+      for (const f of ['locator', 'label', 'prefix', 'suffix']) if (item[f] != null) entry[f] = item[f];
+      items.push(entry);
     }
+    if (items.length > 0) out.push({ startChild, items });
   }
   return out;
+}
+
+/**
+ * Items citados en el documento, en orden de aparición (con repeticiones).
+ * @returns {Array<{key: string|null, itemData: object|null}>}
+ */
+export function listCitedItems(doc) {
+  return listDocumentCitations(doc).flatMap((c) => c.items.map(({ key, itemData }) => ({ key, itemData })));
+}
+
+/** Índice en w:body del párrafo de primer nivel `paragraphIndex` (o -1). */
+export function paragraphChildIndex(doc, paragraphIndex) {
+  const p = topLevelParagraphs(doc)[paragraphIndex];
+  return p ? p.childIndex : -1;
 }
 
 // ---------------------------------------------------------------------------
