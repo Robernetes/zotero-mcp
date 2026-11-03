@@ -1,12 +1,19 @@
 // docx.test.js — tests del módulo de manipulación OOXML para Zotero.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import JSZip from 'jszip';
 import {
+  loadDocx,
   openDocx,
+  saveDocx,
+  serializeDocument,
   readParagraphs,
   countExistingCitations,
   countMaxId,
+  listCitedItems,
   buildCitationRuns,
   insertCitationAtParagraph,
   findBibliographyField,
@@ -14,6 +21,9 @@ import {
   buildBibliographyParagraph,
   hashCode,
 } from '../src/docx.js';
+
+const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 
 // Construye un .docx mínimo en memoria para los tests.
 function makeDocxZip(documentXml) {
@@ -44,30 +54,35 @@ function makeDocxZip(documentXml) {
   return zip;
 }
 
-const BASIC_DOC = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    <w:p><w:r><w:t>Primer párrafo.</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Segundo párrafo con texto.</w:t></w:r></w:p>
-  </w:body>
-</w:document>`;
+async function load(documentXml) {
+  const buffer = await makeDocxZip(documentXml).generateAsync({ type: 'nodebuffer' });
+  return loadDocx(buffer);
+}
+
+function docXml(bodyXml) {
+  return `${DECL}<w:document ${W_NS}><w:body>${bodyXml}</w:body></w:document>`;
+}
+
+function citationField(json) {
+  return (
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+    `<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION ${json}</w:instrText></w:r>` +
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+    '<w:r><w:t>(cita)</w:t></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+  );
+}
+
+const SECT = '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>';
+
+const BASIC_DOC = docXml(
+  '<w:p><w:r><w:t>Primer párrafo.</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>Segundo párrafo con texto.</w:t></w:r></w:p>' +
+    SECT
+);
 
 test('readParagraphs devuelve textos y detecta campos Zotero', async () => {
-  const zip = makeDocxZip(BASIC_DOC);
-  const ctx = { zip, doc: null };
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  ctx.zip = await JSZip.loadAsync(buffer);
-  ctx.doc = await ctx.zip.file('word/document.xml').async('string');
-  // Necesitamos parsear como hace openDocx
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  ctx.doc = parser.parse(ctx.doc);
-
+  const ctx = await load(BASIC_DOC);
   const paragraphs = readParagraphs(ctx);
   assert.equal(paragraphs.length, 2);
   assert.equal(paragraphs[0].text, 'Primer párrafo.');
@@ -75,7 +90,87 @@ test('readParagraphs devuelve textos y detecta campos Zotero', async () => {
   assert.equal(paragraphs[1].text, 'Segundo párrafo con texto.');
 });
 
-test('buildCitationRuns produce XML con el JSON correcto', () => {
+test('readParagraphs conserva texto numérico, entidades e hipervínculos', async () => {
+  const ctx = await load(
+    docXml(
+      '<w:p><w:r><w:t>Código </w:t></w:r><w:r><w:t>007</w:t></w:r>' +
+        '<w:hyperlink r:id="rId9"><w:r><w:t> enlace</w:t></w:r></w:hyperlink></w:p>' +
+        '<w:p><w:r><w:t>1.50</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:t xml:space="preserve">A &amp; B &lt;c&gt; &#x2019;</w:t></w:r></w:p>'
+    )
+  );
+  const paragraphs = readParagraphs(ctx);
+  assert.equal(paragraphs[0].text, 'Código 007 enlace');
+  assert.equal(paragraphs[1].text, '1.50');
+  assert.equal(paragraphs[2].text, 'A & B <c> ’');
+});
+
+test('abrir y guardar sin cambios reproduce el document.xml original', async () => {
+  const original = docXml(
+    '<w:p w:rsidR="00AB12"><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Título</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r>' +
+      '<w:hyperlink r:id="rId9"><w:r><w:t>enlace</w:t></w:r></w:hyperlink>' +
+      '<w:bookmarkStart w:id="0" w:name="m"/><w:r><w:t>B &amp; C &#x2019;</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>' +
+      '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>007</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+      '<w:p><w:r><w:t>1.50</w:t></w:r><w:r><w:br/></w:r></w:p>' +
+      SECT
+  );
+  const ctx = await load(original);
+  assert.equal(serializeDocument(ctx.doc).replace(/\?>\s*/, '?>'), original.replace(/\?>\s*/, '?>'));
+});
+
+test('saveDocx escribe un .docx que vuelve a abrirse con la cita al final del párrafo', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zotero-docx-'));
+  try {
+    const file = path.join(dir, 'doc.docx');
+    const source = docXml(
+      '<w:p><w:r><w:t xml:space="preserve">Antes </w:t></w:r>' +
+        '<w:hyperlink r:id="rId9"><w:r><w:t>enlace</w:t></w:r></w:hyperlink></w:p>' +
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>celda</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+        '<w:p><w:r><w:t>Después</w:t></w:r></w:p>' +
+        SECT
+    );
+    const zip = makeDocxZip(source);
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer' }));
+
+    const ctx = await openDocx(file);
+    const runs = buildCitationRuns({
+      citationID: 'CITE-1',
+      noteIndex: 1,
+      formattedCitation: '(Smith & Jones, 2020)',
+      plainCitation: '(Smith & Jones, 2020)',
+      uris: ['http://zotero.org/users/0/items/ABC12345'],
+      itemData: { id: 1, type: 'book', title: 'A & B' },
+    });
+    insertCitationAtParagraph(ctx.doc, 0, runs);
+    await saveDocx(ctx, file);
+
+    const reopened = await openDocx(file);
+    const xml = serializeDocument(reopened.doc);
+    // Orden intacto: hipervínculo → cita → tabla → párrafo siguiente → sectPr.
+    const order = ['<w:hyperlink', 'ADDIN ZOTERO_ITEM', '<w:tbl>', 'Después', '<w:sectPr>'].map((s) =>
+      xml.indexOf(s)
+    );
+    assert.ok(order.every((pos) => pos >= 0), `faltan elementos: ${order}`);
+    assert.deepEqual([...order].sort((a, b) => a - b), order, 'el orden del documento cambió');
+    // El & se escapa una sola vez.
+    assert.ok(xml.includes('<w:t xml:space="preserve">(Smith &amp; Jones, 2020)</w:t>'));
+    assert.ok(!xml.includes('&amp;amp;') && !xml.includes('&amp;#'));
+
+    const paragraphs = readParagraphs(reopened);
+    assert.equal(paragraphs[0].text, 'Antes enlace(Smith & Jones, 2020)');
+    assert.equal(paragraphs[0].hasZoteroField, true);
+    assert.equal(countExistingCitations(reopened), 1);
+    assert.deepEqual(listCitedItems(reopened.doc), [
+      { key: 'ABC12345', itemData: { id: 1, type: 'book', title: 'A & B' } },
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildCitationRuns produce runs con el JSON correcto', () => {
   const runs = buildCitationRuns({
     citationID: 'CITE-1',
     noteIndex: 1,
@@ -88,13 +183,14 @@ test('buildCitationRuns produce XML con el JSON correcto', () => {
   });
 
   assert.equal(runs.length, 5);
-  assert.equal(runs[0]['w:fldChar']['@_w:fldCharType'], 'begin');
-  assert.ok(String(runs[1]['w:instrText']['#text']).startsWith(' ADDIN ZOTERO_ITEM CSL_CITATION '));
-  assert.equal(runs[2]['w:fldChar']['@_w:fldCharType'], 'separate');
-  assert.equal(runs[3]['w:t']['#text'], '(Smith, 2020, p. 42)');
-  assert.equal(runs[4]['w:fldChar']['@_w:fldCharType'], 'end');
+  const xml = serializeDocument([{ 'w:document': [{ 'w:body': [{ 'w:p': runs }] }] }]);
+  const types = [...xml.matchAll(/w:fldCharType="(\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual(types, ['begin', 'separate', 'end']);
+  assert.ok(xml.includes('<w:t xml:space="preserve">(Smith, 2020, p. 42)</w:t>'));
 
-  const json = JSON.parse(String(runs[1]['w:instrText']['#text']).replace(' ADDIN ZOTERO_ITEM CSL_CITATION ', ''));
+  const instr = xml.match(/<w:instrText xml:space="preserve">([^<]*)<\/w:instrText>/)[1];
+  assert.ok(instr.startsWith(' ADDIN ZOTERO_ITEM CSL_CITATION '));
+  const json = JSON.parse(instr.replace(' ADDIN ZOTERO_ITEM CSL_CITATION ', ''));
   assert.equal(json.citationID, 'CITE-1');
   assert.equal(json.properties.noteIndex, 1);
   assert.equal(json.citationItems.length, 1);
@@ -103,165 +199,100 @@ test('buildCitationRuns produce XML con el JSON correcto', () => {
   assert.equal(json.citationItems[0].itemData.id, 12345);
 });
 
-test('insertCitationAtParagraph agrega runs al párrafo correcto', async () => {
-  const zip = makeDocxZip(BASIC_DOC);
-  const ctx = { zip, doc: null };
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  ctx.zip = await JSZip.loadAsync(buffer);
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  ctx.doc = parser.parse(await ctx.zip.file('word/document.xml').async('string'));
-
-  const runs = buildCitationRuns({
-    citationID: 'CITE-1',
-    noteIndex: 1,
-    formattedCitation: '(Test)',
-    plainCitation: '(Test)',
-    uris: ['http://zotero.org/users/0/items/KEY'],
-    itemData: { id: 1, type: 'book', title: 'X' },
-  });
-
-  insertCitationAtParagraph(ctx.doc, 0, runs);
-
-  const p = ctx.doc['w:document']['w:body']['w:p'][0];
-  const allRuns = p['w:r'];
-  assert.ok(allRuns.length > runs.length);
-  // El último run debería ser el end field char.
-  const lastRun = allRuns[allRuns.length - 1];
-  assert.equal(lastRun['w:fldChar']['@_w:fldCharType'], 'end');
-});
-
 test('insertCitationAtParagraph lanza si el índice no existe', async () => {
-  const zip = makeDocxZip(BASIC_DOC);
-  const ctx = { zip, doc: null };
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  ctx.zip = await JSZip.loadAsync(buffer);
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  ctx.doc = parser.parse(await ctx.zip.file('word/document.xml').async('string'));
-
+  const ctx = await load(BASIC_DOC);
   assert.throws(() => insertCitationAtParagraph(ctx.doc, 99, []), /No existe el párrafo 99/);
 });
 
 test('findBibliographyField encuentra o no el campo BIBL', async () => {
-  const docWithBib = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    <w:p><w:r><w:t>Texto.</w:t></w:r></w:p>
-    <w:p>
-      <w:r><w:fldChar w:fldCharType="begin"/></w:r>
-      <w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_BIBL {"style":"http://www.zotero.org/styles/apa","fieldType":"Field","hasBibliography":true}</w:instrText></w:r>
-      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
-      <w:r><w:fldChar w:fldCharType="end"/></w:r>
-    </w:p>
-  </w:body>
-</w:document>`;
+  const withBib = await load(
+    docXml(
+      '<w:p><w:r><w:t>Texto.</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+        '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_BIBL {"style":"http://www.zotero.org/styles/apa","fieldType":"Field","hasBibliography":true}</w:instrText></w:r>' +
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+    )
+  );
+  assert.equal(findBibliographyField(withBib.doc).paragraphIndex, 1);
 
-  const zip = makeDocxZip(docWithBib);
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  const loaded = await JSZip.loadAsync(buffer);
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  const doc = parser.parse(await loaded.file('word/document.xml').async('string'));
-
-  const found = findBibliographyField(doc);
-  assert.equal(found.paragraphIndex, 1);
-
-  // Documento sin campo bibl
-  const zip2 = makeDocxZip(BASIC_DOC);
-  const buffer2 = await zip2.generateAsync({ type: 'nodebuffer' });
-  const loaded2 = await JSZip.loadAsync(buffer2);
-  const doc2 = parser.parse(await loaded2.file('word/document.xml').async('string'));
-  assert.equal(findBibliographyField(doc2), null);
+  const withoutBib = await load(BASIC_DOC);
+  assert.equal(findBibliographyField(withoutBib.doc), null);
 });
 
-test('upsertBibliography actualiza si existe y añade si no', async () => {
-  const zip = makeDocxZip(BASIC_DOC);
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  const loaded = await JSZip.loadAsync(buffer);
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  const doc = parser.parse(await loaded.file('word/document.xml').async('string'));
+test('upsertBibliography añade antes de w:sectPr y luego reemplaza', async () => {
+  const ctx = await load(BASIC_DOC);
 
-  // No existe → añade
-  const res = upsertBibliography(doc, 'http://www.zotero.org/styles/apa', 'Smith, J. (2020).');
+  const res = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/apa', 'Smith, J. (2020).');
   assert.equal(res.added, true);
-  const wp = doc['w:document']['w:body']['w:p'];
-  assert.ok(wp.length > 2); // nuevo párrafo añadido
+  assert.equal(res.paragraphIndex, 2);
+  let xml = serializeDocument(ctx.doc);
+  assert.ok(xml.indexOf('ADDIN ZOTERO_BIBL') < xml.indexOf('<w:sectPr>'), 'la bibliografía debe ir antes de w:sectPr');
+  assert.ok(findBibliographyField(ctx.doc));
 
-  const found = findBibliographyField(doc);
-  assert.ok(found);
-
-  // Ya existe → actualiza
-  const res2 = upsertBibliography(doc, 'http://www.zotero.org/styles/mla', 'New Bib');
+  const res2 = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/mla', 'New Bib');
   assert.equal(res2.replaced, true);
+  xml = serializeDocument(ctx.doc);
+  assert.equal(xml.match(/ADDIN ZOTERO_BIBL/g).length, 1);
+  assert.ok(xml.includes('New Bib') && !xml.includes('Smith, J. (2020).'));
+  assert.equal(readParagraphs(ctx).length, 3);
 });
 
-test('countExistingCitations cuenta campos ADDIN ZOTERO_ITEM', async () => {
-  const docWithCite = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    <w:p><w:r><w:t>Antes.</w:t></w:r></w:p>
-    <w:p>
-      <w:r><w:fldChar w:fldCharType="begin"/></w:r>
-      <w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"a"}</w:instrText></w:r>
-      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
-      <w:r><w:fldChar w:fldCharType="end"/></w:r>
-    </w:p>
-    <w:p>
-      <w:r><w:fldChar w:fldCharType="begin"/></w:r>
-      <w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"b"}</w:instrText></w:r>
-      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
-      <w:r><w:fldChar w:fldCharType="end"/></w:r>
-    </w:p>
-  </w:body>
-</w:document>`;
+test('upsertBibliography reemplaza una bibliografía que abarca varios párrafos', async () => {
+  const ctx = await load(
+    docXml(
+      '<w:p><w:r><w:t>Texto.</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+        '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_BIBL {"uncited":[]} CSL_BIBLIOGRAPHY</w:instrText></w:r>' +
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Ref 1</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:t>Ref 2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>' +
+        '<w:p><w:r><w:t>Anexo</w:t></w:r></w:p>' +
+        SECT
+    )
+  );
+  const res = upsertBibliography(ctx.doc, 'http://www.zotero.org/styles/apa', 'Nueva');
+  assert.equal(res.replaced, true);
+  assert.deepEqual(
+    readParagraphs(ctx).map((p) => p.text),
+    ['Texto.', 'Nueva', 'Anexo']
+  );
+});
 
-  const zip = makeDocxZip(docWithCite);
-  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-  const loaded = await JSZip.loadAsync(buffer);
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    removeNSPrefix: false,
-    isArray: (name) => ['w:p', 'w:r', 'w:t', 'w:fldChar', 'w:instrText', 'w:br'].includes(name),
-  });
-  const doc = parser.parse(await loaded.file('word/document.xml').async('string'));
-
-  assert.equal(countExistingCitations({ doc }), 2);
-  assert.equal(countMaxId({ doc }), 0); // no hay "id" en estos JSON simplificados
+test('countExistingCitations y countMaxId leen campos partidos en varios instrText', async () => {
+  const ctx = await load(
+    docXml(
+      '<w:p><w:r><w:t>Antes.</w:t></w:r></w:p>' +
+        `<w:p>${citationField('{"citationID":"a","citationItems":[{"id":7,"uris":["http://zotero.org/users/0/items/AAAA1111"]}]}')}</w:p>` +
+        '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+        '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"b","citationItems":[{"id":3,</w:instrText></w:r>' +
+        '<w:r><w:instrText xml:space="preserve">"uris":["http://zotero.org/users/local/x/items/BBBB2222"],"itemData":{"id":3,"title":"B"}}]}</w:instrText></w:r>' +
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>(B)</w:t></w:r>' +
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+    )
+  );
+  assert.equal(countExistingCitations(ctx), 2);
+  assert.equal(countMaxId(ctx), 7);
+  assert.deepEqual(listCitedItems(ctx.doc), [
+    { key: 'AAAA1111', itemData: null },
+    { key: 'BBBB2222', itemData: { id: 3, title: 'B' } },
+  ]);
 });
 
 test('buildBibliographyParagraph construye el campo correcto', () => {
   const p = buildBibliographyParagraph('http://www.zotero.org/styles/apa', 'Smith, J. (2020).');
-  const runs = p['w:r'];
-  assert.ok(runs.length >= 4);
-  assert.equal(runs[0]['w:fldChar']['@_w:fldCharType'], 'begin');
-  const instr = String(runs[1]['w:instrText']['#text']);
+  const xml = serializeDocument([{ 'w:document': [{ 'w:body': [p] }] }]);
+  const instr = xml.match(/<w:instrText xml:space="preserve">([^<]*)<\/w:instrText>/)[1];
   assert.ok(instr.startsWith(' ADDIN ZOTERO_BIBL '));
   const json = JSON.parse(instr.replace(' ADDIN ZOTERO_BIBL ', ''));
   assert.equal(json.style, 'http://www.zotero.org/styles/apa');
+  assert.ok(xml.includes('Smith, J. (2020).'));
+});
+
+test('loadDocx rechaza un zip sin word/document.xml', async () => {
+  const zip = new JSZip();
+  zip.file('otro.xml', '<a/>');
+  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+  await assert.rejects(() => loadDocx(buffer), /falta word\/document.xml/);
 });
 
 test('hashCode produce enteros no negativos', () => {

@@ -148,9 +148,10 @@ export class CitationManager {
       ? toPreList(state.citationList.slice(0, -1))
       : toPreList(state.citationList);
     const out = state.engine.processCitationCluster(citation, pre, [], 'citation');
-    const rendered = extractCitationText(out).trim();
+    // citeproc devuelve HTML (p. ej. "&#38;" para "&"); se entrega texto plano.
+    const rendered = htmlToText(extractCitationText(out));
     return {
-      citation: rendered.trim(),
+      citation: rendered,
       style: styleName,
       locale: localeName,
       itemKey: key,
@@ -162,13 +163,23 @@ export class CitationManager {
    * Genera la bibliografía.
    * @param {object} opts
    * @param {string[]} [opts.keys] Si se omite, usa el registro de citas del documento.
+   * @param {object[]} [opts.items] Items CSL JSON ya resueltos (p. ej. los incrustados en un .docx),
+   *   en orden de cita. Tiene prioridad sobre `keys` y no consulta Zotero ni altera el registro.
    * @param {'plaintext'|'markdown'|'html'} [opts.format=markdown]
-   * @returns {Promise<{entries: string[], bibliography: string, format: string, count: number, source: 'registro'|'claves'}>}
+   * @returns {Promise<{entries: string[], bibliography: string, format: string, count: number, source: 'registro'|'claves'|'items'}>}
    */
-  async bibliography({ style = 'apa', locale = 'es-ES', keys, format = 'markdown' } = {}) {
+  async bibliography({ style = 'apa', locale = 'es-ES', keys, items, format = 'markdown' } = {}) {
     const styleName = this._normalizeStyle(style);
     const localeName = this._normalizeLocale(locale);
     const outputFormat = FORMATS.includes(format) ? format : 'markdown';
+
+    if (items && items.length > 0) {
+      const cache = new Map();
+      for (const item of items) {
+        if (item && item.id != null && !cache.has(String(item.id))) cache.set(String(item.id), item);
+      }
+      return this._renderOrdered([...cache.keys()], cache, styleName, localeName, outputFormat, 'items');
+    }
 
     if (keys && keys.length > 0) {
       await this._loadItems(keys);
@@ -176,29 +187,7 @@ export class CitationManager {
       if (missing.length > 0) {
         throw new Error(`No se encontraron en Zotero los items con key: ${missing.join(', ')}.`);
       }
-      // Motor temporal: no altera el registro del documento.
-      const temp = new CitationManager({
-        fetchItems: this.fetchItems,
-        stylesDir: this.stylesDir,
-        localesDir: this.localesDir,
-      });
-      temp.itemCache = this.itemCache;
-      const tempState = temp._ensureState(styleName, localeName);
-      for (const k of keys) {
-        const citation = {
-          citationID: `TEMP-${++tempState.noteIndex}`,
-          citationItems: [{ id: String(k) }],
-          properties: { noteIndex: tempState.noteIndex },
-        };
-        tempState.citationList.push(citation);
-        tempState.engine.processCitationCluster(
-          citation,
-          toPreList(tempState.citationList.slice(0, -1)),
-          [],
-          'citation'
-        );
-      }
-      return this._render(tempState.engine, outputFormat, 'claves');
+      return this._renderOrdered(keys, this.itemCache, styleName, localeName, outputFormat, 'claves');
     }
 
     const state = this._ensureState(styleName, localeName);
@@ -206,6 +195,32 @@ export class CitationManager {
       return { entries: [], bibliography: '', format: outputFormat, count: 0, source: 'registro' };
     }
     return this._render(state.engine, outputFormat, 'registro');
+  }
+
+  /** Bibliografía con un motor temporal: cita las keys en orden sin tocar el registro. */
+  _renderOrdered(keys, itemCache, styleName, localeName, format, source) {
+    const temp = new CitationManager({
+      fetchItems: this.fetchItems,
+      stylesDir: this.stylesDir,
+      localesDir: this.localesDir,
+    });
+    temp.itemCache = itemCache;
+    const tempState = temp._ensureState(styleName, localeName);
+    for (const k of keys) {
+      const citation = {
+        citationID: `TEMP-${++tempState.noteIndex}`,
+        citationItems: [{ id: String(k) }],
+        properties: { noteIndex: tempState.noteIndex },
+      };
+      tempState.citationList.push(citation);
+      tempState.engine.processCitationCluster(
+        citation,
+        toPreList(tempState.citationList.slice(0, -1)),
+        [],
+        'citation'
+      );
+    }
+    return this._render(tempState.engine, format, source);
   }
 
   _render(engine, format, source) {
@@ -249,18 +264,16 @@ function htmlToText(html) {
   return String(html ?? '')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#38;/g, '&')
-    .replace(/&#x26;/g, '&')
+    .replace(/&#x2019;/gi, "'")
+    .replace(/&#x201C;/gi, '"')
+    .replace(/&#x201D;/gi, '"')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number.parseInt(d, 10)))
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2019;/g, "'")
-    .replace(/&#x201C;/g, '"')
-    .replace(/&#x201D;/g, '"')
+    .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -113,3 +113,44 @@ test('cambio de estilo reinicia el registro (consistencia numérica)', async () 
   // Vancouver numera de nuevo desde 1 al cambiar de estilo (usa paréntesis).
   assert.match(ieee2.citation, /[\[\(]1[\]\)]/);
 });
+
+test('la cita se devuelve como texto plano, sin entidades HTML', async () => {
+  const manager = new CitationManager({
+    fetchItems: async () => [
+      {
+        id: 'CCC3',
+        type: 'article-journal',
+        title: 'Two authors',
+        issued: { 'date-parts': [[2021]] },
+        author: [
+          { family: 'Smith', given: 'John' },
+          { family: 'Jones', given: 'Mary' },
+        ],
+      },
+    ],
+  });
+  const res = await manager.cite({ key: 'CCC3', style: 'apa', locale: 'en-US' });
+  assert.ok(res.citation.includes('Smith & Jones'), `cita: ${res.citation}`);
+  assert.ok(!/&#?\w+;/.test(res.citation), `cita con entidades: ${res.citation}`);
+});
+
+test('bibliografía desde items ya resueltos no consulta Zotero ni altera el registro', async () => {
+  const manager = new CitationManager({
+    fetchItems: async () => {
+      throw new Error('no debería consultar Zotero');
+    },
+  });
+  const bib = await manager.bibliography({
+    items: [ITEMS[1], ITEMS[0], ITEMS[1]],
+    style: 'ieee',
+    locale: 'en-US',
+    format: 'plaintext',
+  });
+  assert.equal(bib.source, 'items');
+  assert.equal(bib.count, 2);
+  // Orden de cita: García [1], Smith [2].
+  assert.ok(bib.entries[0].includes('García'), bib.entries[0]);
+  assert.ok(bib.entries[1].includes('Smith'), bib.entries[1]);
+  const docBib = await manager.bibliography({ style: 'ieee', locale: 'en-US' });
+  assert.equal(docBib.count, 0);
+});

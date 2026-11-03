@@ -22,6 +22,7 @@ import {
   buildCitationRuns,
   insertCitationAtParagraph,
   upsertBibliography,
+  listCitedItems,
   hashCode,
   validateDocxPath,
 } from './docx.js';
@@ -346,7 +347,7 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   'zotero_update_bibliography_docx',
-  'Inserta o actualiza el campo de bibliografía Zotero (ADDIN ZOTERO_BIBL) en un documento Word, al final del documento. Las referencias se generan desde las citas registradas con zotero_insert_citation_docx. Al abrir el archivo en Word con el plugin de Zotero, la bibliografía se renderiza con el estilo configurado.',
+  'Inserta o actualiza el campo de bibliografía Zotero (ADDIN ZOTERO_BIBL) en un documento Word, al final del documento. Las referencias se generan desde los campos de cita Zotero que ya contiene el propio documento (los insertados con zotero_insert_citation_docx o con el plugin de Word). Al abrir el archivo en Word con el plugin de Zotero, la bibliografía se renderiza con el estilo configurado.',
   {
     filePath: z.string().min(1).describe('Ruta del archivo .docx.'),
     style: z.string().optional().describe(`Estilo CSL (para la URL del estilo en el campo BIBL). Default: ${DEFAULT_STYLE}.`),
@@ -358,20 +359,46 @@ server.tool(
     const style = String(args.style || DEFAULT_STYLE).trim();
     const styleUrl = `http://www.zotero.org/styles/${style}`;
 
-    // Generar la bibliografía desde el registro de citas.
+    const ctx = await openDocx(abs);
+
+    // Las referencias salen de las citas Zotero del propio documento: se usa el
+    // itemData incrustado en cada campo y, si falta, se busca la key en Zotero.
+    const cited = listCitedItems(ctx.doc);
+    if (cited.length === 0) {
+      return fail(
+        'El documento no contiene citas de Zotero. Inserta citas con zotero_insert_citation_docx antes de generar la bibliografía.'
+      );
+    }
+    const toFetch = [...new Set(cited.filter((c) => !c.itemData && c.key).map((c) => c.key))];
+    const fetched = toFetch.length > 0 ? await zotero.getByKeys(toFetch) : [];
+    const fetchedByKey = new Map(fetched.map((item) => [String(item.id), item]));
+    const items = [];
+    const unresolved = [];
+    for (const c of cited) {
+      if (c.itemData) items.push({ ...c.itemData, id: c.key || `doc-${c.itemData.id}` });
+      else if (fetchedByKey.has(c.key)) items.push(fetchedByKey.get(c.key));
+      else unresolved.push(c.key);
+    }
+    if (unresolved.length > 0) {
+      return fail(
+        `No se pudieron resolver en Zotero las citas del documento con key: ${[...new Set(unresolved)].join(', ')}.`
+      );
+    }
+
     const bib = await citationManager.bibliography({
       style,
       locale: DEFAULT_LOCALE,
+      items,
       format: 'plaintext',
     });
 
-    const ctx = await openDocx(abs);
     const result = upsertBibliography(ctx.doc, styleUrl, bib.bibliography);
 
     const payload = {
       filePath: abs,
       style,
       styleUrl,
+      citationsInDocument: cited.length,
       entries: bib.count,
       ...result,
       apply: args.apply === true,
