@@ -1,5 +1,7 @@
 # zotero-mcp
 
+[![CI](https://github.com/Robernetes/zotero-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Robernetes/zotero-mcp/actions/workflows/ci.yml)
+
 **Antigravity** plugin that adds an **MCP** server connected to your **local Zotero library** to:
 
 - **Search** items in your library (by text, type and collection).
@@ -270,6 +272,8 @@ npm start                             # start the MCP server via stdio
 node scripts/smoke.mjs                # MCP handshake + list registered tools
 node scripts/e2e.mjs '{"tool":"zotero_status"}' '{"tool":"zotero_search","args":{"query":"x"}}'   # test tools against your Zotero
 ```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push to `main` and every pull request: the test suite and the MCP smoke test on Node 18, 20, 22 and 24 (Linux) and Node 22 (Windows), plus `npm audit`, which fails on high or critical vulnerabilities. Tests do not need Zotero: they use mocked responses.
 
 The structure follows the complete Antigravity plugin pattern
 (`plugin.json`, `mcp_config.json`, `server/` → `src/`, `skills/`, `scripts/`).

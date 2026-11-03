@@ -76,12 +76,18 @@ try {
     'zotero_list_collections',
     'zotero_cite',
     'zotero_bibliography',
+    'zotero_read_docx',
+    'zotero_insert_citation_docx',
+    'zotero_update_bibliography_docx',
+    'zotero_find_external',
+    'zotero_add_item',
   ];
-  if (EXPECTED.every((t) => tools.includes(t))) {
+  const missing = EXPECTED.filter((t) => !tools.includes(t));
+  if (missing.length === 0) {
     console.log('OK: todas las herramientas esperadas están presentes.');
     process.exitCode = 0;
   } else {
-    console.error('FALTA: algunas herramientas esperadas no se registraron.');
+    console.error(`FALTA: no se registraron: ${missing.join(', ')}.`);
     process.exitCode = 1;
   }
 } catch (err) {
