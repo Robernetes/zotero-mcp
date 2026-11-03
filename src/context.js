@@ -18,21 +18,32 @@ import { Workspace, parseAllowedDirs } from './workspace.js';
  * @property {Workspace} workspace                 Carpetas donde se pueden leer y escribir documentos.
  */
 
+/**
+ * Valor de una variable de entorno, o undefined si está vacía o llega como un
+ * "${VAR}" sin expandir (p. ej. si se copia mcp_config.json a un cliente que no
+ * expande variables): así se usa el valor por defecto en lugar del texto literal.
+ */
+export function envValue(value) {
+  const s = value == null ? '' : String(value).trim();
+  return s && !/^\$\{[^}]*\}$/.test(s) ? s : undefined;
+}
+
 /** Lee la configuración de las variables de entorno. */
 export function loadConfig(env = process.env) {
+  const get = (name) => envValue(env[name]);
   return {
-    apiUrl: (env.ZOTERO_API_URL || 'http://127.0.0.1:23119/api').trim(),
-    defaultStyle: (env.ZOTERO_DEFAULT_STYLE || 'apa').trim(),
-    defaultLocale: (env.ZOTERO_LOCALE || 'es-ES').trim(),
+    apiUrl: get('ZOTERO_API_URL') || 'http://127.0.0.1:23119/api',
+    defaultStyle: get('ZOTERO_DEFAULT_STYLE') || 'apa',
+    defaultLocale: get('ZOTERO_LOCALE') || 'es-ES',
     // Copia <archivo>.bak antes de sobrescribir un documento (default: sí).
-    backup: envFlag(env.ZOTERO_MCP_BACKUP, true),
+    backup: envFlag(get('ZOTERO_MCP_BACKUP'), true),
     // Carpetas donde se pueden leer y escribir documentos; si no se indican, las
     // carpetas de trabajo del cliente MCP (roots) o la carpeta de arranque.
-    allowedDirs: parseAllowedDirs(env.ZOTERO_MCP_ALLOWED_DIRS),
+    allowedDirs: parseAllowedDirs(get('ZOTERO_MCP_ALLOWED_DIRS')),
     // Búsqueda externa: OPENALEX_API_KEY (opcional) da cuota propia en OpenAlex;
     // ZOTERO_MCP_CONTACT_EMAIL (opcional) se envía a OpenAlex/Crossref como contacto.
-    openAlexKey: env.OPENALEX_API_KEY,
-    contactEmail: env.ZOTERO_MCP_CONTACT_EMAIL,
+    openAlexKey: get('OPENALEX_API_KEY'),
+    contactEmail: get('ZOTERO_MCP_CONTACT_EMAIL'),
   };
 }
 

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Robernetes/zotero-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Robernetes/zotero-mcp/actions/workflows/ci.yml)
 
-Plugin de **Antigravity** que agrega un servidor **MCP** conectado a la **biblioteca local de Zotero** para:
+Servidor **MCP** conectado a la **biblioteca local de Zotero**, empaquetado como plugin de **Antigravity** y utilizable desde cualquier cliente MCP ([otros clientes](#uso-con-otros-clientes-mcp)), para:
 
 - **Buscar** items en la biblioteca (por texto, tipo y colección).
 - **Citar** con estilos CSL: APA, MLA, Chicago (author-date), Harvard, IEEE y Vancouver.
@@ -44,6 +44,65 @@ Si el plugin no ejecuta la instalación de dependencias automáticamente:
 git clone https://github.com/Robernetes/zotero-mcp
 cd zotero-mcp
 npm install          # o: powershell -File scripts/setup.ps1  /  sh scripts/setup.sh
+```
+
+## Uso con otros clientes MCP
+
+El servidor es un servidor MCP estándar (stdio), así que funciona con cualquier cliente MCP, no solo con Antigravity: Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Gemini CLI… Solo `plugin.json` y `mcp_config.json` son específicos del plugin de Antigravity.
+
+1. Clona el repositorio e instala las dependencias (ver [Instalación](#instalación)).
+2. Registra el servidor en tu cliente con `node` y la **ruta absoluta** a `src/server.js`. En Windows puedes escribir la ruta con `/` para no tener que escapar `\\` en JSON.
+3. Pasa en `env` las variables que necesites (ver [Configuración](#configuración)). Escribe valores reales: los `${VAR}` como los de `mcp_config.json` solo funcionan en clientes que expanden variables de entorno (si uno llega sin expandir, el servidor lo ignora y usa el valor por defecto).
+4. Reinicia el cliente y ejecuta `zotero_status`: `ok: true` confirma la conexión con Zotero, y `workspace` muestra las carpetas donde se pueden leer y escribir documentos. Si `source` es la carpeta de arranque del servidor, el cliente no indica sus carpetas de trabajo (*roots*): define `ZOTERO_MCP_ALLOWED_DIRS` con las carpetas de tus documentos.
+
+**Claude Code** (`--scope user` lo deja disponible en todos tus proyectos):
+
+```powershell
+claude mcp add zotero --scope user -e ZOTERO_LOCALE=es-ES -- node C:/ruta/a/zotero-mcp/src/server.js
+```
+
+Para usar también la skill `zotero-research`, copia la carpeta `skills/zotero-research` a `~/.claude/skills/` (o a `.claude/skills/` en un proyecto).
+
+**Claude Desktop, Cursor, Windsurf, Gemini CLI** y la mayoría de clientes usan un bloque `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "node",
+      "args": ["C:/ruta/a/zotero-mcp/src/server.js"],
+      "env": {
+        "ZOTERO_DEFAULT_STYLE": "apa",
+        "ZOTERO_LOCALE": "es-ES",
+        "ZOTERO_MCP_ALLOWED_DIRS": "C:/Users/tu-usuario/Documents/Tesis"
+      }
+    }
+  }
+}
+```
+
+| Cliente | Archivo de configuración |
+|---|---|
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` (Windows), `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
+| Cursor | `~/.cursor/mcp.json` (global) o `.cursor/mcp.json` (proyecto) |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Gemini CLI | `~/.gemini/settings.json` |
+
+`ZOTERO_MCP_ALLOWED_DIRS` es especialmente útil en clientes sin carpeta de proyecto, como Claude Desktop.
+
+**VS Code** (`.vscode/mcp.json` en el proyecto) usa la clave `servers` y el tipo `stdio`:
+
+```json
+{
+  "servers": {
+    "zotero": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["C:/ruta/a/zotero-mcp/src/server.js"],
+      "env": { "ZOTERO_LOCALE": "es-ES" }
+    }
+  }
+}
 ```
 
 ## Configuración

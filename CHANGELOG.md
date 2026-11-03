@@ -6,6 +6,17 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 
 ## [Sin publicar]
 
+### Añadido
+
+- Sección «Uso con otros clientes MCP» en los README: Claude Code, Claude Desktop,
+  Cursor, VS Code, Windsurf y Gemini CLI.
+
+### Corregido
+
+- Una variable de entorno que llega como `${VAR}` sin expandir (p. ej. al copiar
+  `mcp_config.json` a otro cliente) se ignora y se usa el valor por defecto; antes
+  `ZOTERO_API_URL` quedaba con el texto literal y no se podía conectar con Zotero.
+
 ### Seguridad
 
 - Los documentos `.md` y `.docx` solo se leen y escriben dentro de las carpetas
