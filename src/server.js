@@ -7,10 +7,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-
 import { ZoteroClient } from './zotero-client.js';
+import { envFlag, readFileForEdit, validateFilePath, withFileLock, writeFileAtomic } from './file-io.js';
 import { CitationManager, AVAILABLE_STYLES, FORMATS, LOCALES } from './cite.js';
 import { countReferenceEntries, extractBibliographySection, updateBibliographySection } from './bib-section.js';
 import {
@@ -31,7 +29,8 @@ const env = process.env;
 const API_URL = (env.ZOTERO_API_URL || 'http://127.0.0.1:23119/api').trim();
 const DEFAULT_STYLE = (env.ZOTERO_DEFAULT_STYLE || 'apa').trim();
 const DEFAULT_LOCALE = (env.ZOTERO_LOCALE || 'es-ES').trim();
-const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
+// Copia <archivo>.bak antes de sobrescribir un documento (default: sí).
+const BACKUP = envFlag(env.ZOTERO_MCP_BACKUP, true);
 
 const zotero = new ZoteroClient({ baseUrl: API_URL });
 
@@ -185,19 +184,10 @@ server.tool(
       return ok({ ...bib, style, locale });
     }
 
-    const filePath = args.filePath;
-    const ext = path.extname(filePath).toLowerCase();
-    if (!['.md', '.markdown'].includes(ext)) {
-      return fail(
-        `filePath debe ser un archivo .md o .markdown (se recibió "${ext || '(sin extensión)'}"). ` +
-          'Para documentos Word (.docx) usa zotero_update_bibliography_docx.'
-      );
-    }
-    const abs = path.resolve(filePath);
-    if (!existsSync(abs)) return fail(`El archivo no existe: ${abs}`);
-    const st = statSync(abs);
-    if (!st.isFile()) return fail(`La ruta no es un archivo: ${abs}`);
-    if (st.size > MAX_FILE_BYTES) return fail('El archivo supera el límite de 2 MB; no se modifica.');
+    const abs = validateFilePath(args.filePath, {
+      extensions: ['.md', '.markdown'],
+      hint: 'Para documentos Word (.docx) usa zotero_update_bibliography_docx.',
+    });
 
     // Nunca reescribir la sección con una bibliografía vacía: suele significar
     // que el registro de citas en memoria se perdió (p. ej. el servidor se reinició).
@@ -208,11 +198,12 @@ server.tool(
       );
     }
 
-    const original = readFileSync(abs, 'utf8');
-    const oldSection = extractBibliographySection(original);
-    const oldEntries = countReferenceEntries(oldSection || '');
-    const result = updateBibliographySection(original, bib.bibliography, {
-      createSection: args.createSection === true,
+    return withFileLock(abs, async () => {
+      const { data: original, fingerprint } = readFileForEdit(abs, 'utf8');
+      const oldSection = extractBibliographySection(original);
+      const oldEntries = countReferenceEntries(oldSection || '');
+      const result = updateBibliographySection(original, bib.bibliography, {
+        createSection: args.createSection === true,
     });
 
     if (!result.applied) {
@@ -250,11 +241,13 @@ server.tool(
     }
 
     if (args.apply === true && result.text !== original) {
-      writeFileSync(abs, result.text, 'utf8');
+      const { backupPath } = writeFileAtomic(abs, result.text, { expected: fingerprint, backup: BACKUP });
       payload.written = true;
+      if (backupPath) payload.backupPath = backupPath;
     }
 
     return ok(payload);
+    });
   })
 );
 
@@ -318,30 +311,31 @@ server.tool(
       register: false,
     });
 
-    // Abrir el docx y calcular noteIndex.
-    const ctx = await openDocx(abs);
-    const existingCount = countExistingCitations(ctx);
-    const noteIndex = existingCount + 1;
-    const citationID = `CITE-${noteIndex}`;
+    // Abrir el docx y calcular noteIndex (en exclusiva sobre el archivo hasta guardar).
+    return withFileLock(abs, async () => {
+      const ctx = await openDocx(abs);
+      const existingCount = countExistingCitations(ctx);
+      const noteIndex = existingCount + 1;
+      const citationID = `CITE-${noteIndex}`;
 
-    // Asignar un id numérico único al itemData (debe coincidir con citationItem.id).
-    const maxId = countMaxId(ctx);
-    const numId = maxId + 1;
+      // Asignar un id numérico único al itemData (debe coincidir con citationItem.id).
+      const maxId = countMaxId(ctx);
+      const numId = maxId + 1;
 
-    const itemData = { ...cslItem, id: numId };
-    const uris = [`http://zotero.org/users/0/items/${key}`];
+      const itemData = { ...cslItem, id: numId };
+      const uris = [`http://zotero.org/users/0/items/${key}`];
 
-    const runs = buildCitationRuns({
-      citationID,
-      noteIndex,
-      formattedCitation: citeResult.citation,
-      plainCitation: citeResult.citation,
-      uris,
-      itemData,
-      locator: args.locator,
-      label: args.label,
-      prefix: args.prefix,
-      suffix: args.suffix,
+      const runs = buildCitationRuns({
+        citationID,
+        noteIndex,
+        formattedCitation: citeResult.citation,
+        plainCitation: citeResult.citation,
+        uris,
+        itemData,
+        locator: args.locator,
+        label: args.label,
+        prefix: args.prefix,
+        suffix: args.suffix,
     });
 
     insertCitationAtParagraph(ctx.doc, args.paragraphIndex, runs);
@@ -360,11 +354,13 @@ server.tool(
     };
 
     if (args.apply === true) {
-      await saveDocx(ctx, abs);
+      const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
       payload.written = true;
+      if (backupPath) payload.backupPath = backupPath;
     }
 
     return ok(payload);
+    });
   })
 );
 
@@ -385,37 +381,38 @@ server.tool(
     const style = String(args.style || DEFAULT_STYLE).trim();
     const styleUrl = `http://www.zotero.org/styles/${style}`;
 
-    const ctx = await openDocx(abs);
+    return withFileLock(abs, async () => {
+      const ctx = await openDocx(abs);
 
-    // Las referencias salen de las citas Zotero del propio documento: se usa el
-    // itemData incrustado en cada campo y, si falta, se busca la key en Zotero.
-    const cited = listCitedItems(ctx.doc);
-    if (cited.length === 0) {
-      return fail(
-        'El documento no contiene citas de Zotero. Inserta citas con zotero_insert_citation_docx antes de generar la bibliografía.'
-      );
-    }
-    const toFetch = [...new Set(cited.filter((c) => !c.itemData && c.key).map((c) => c.key))];
-    const fetched = toFetch.length > 0 ? await zotero.getByKeys(toFetch) : [];
-    const fetchedByKey = new Map(fetched.map((item) => [String(item.id), item]));
-    const items = [];
-    const unresolved = [];
-    for (const c of cited) {
-      if (c.itemData) items.push({ ...c.itemData, id: c.key || `doc-${c.itemData.id}` });
-      else if (fetchedByKey.has(c.key)) items.push(fetchedByKey.get(c.key));
-      else unresolved.push(c.key);
-    }
-    if (unresolved.length > 0) {
-      return fail(
-        `No se pudieron resolver en Zotero las citas del documento con key: ${[...new Set(unresolved)].join(', ')}.`
-      );
-    }
+      // Las referencias salen de las citas Zotero del propio documento: se usa el
+      // itemData incrustado en cada campo y, si falta, se busca la key en Zotero.
+      const cited = listCitedItems(ctx.doc);
+      if (cited.length === 0) {
+        return fail(
+          'El documento no contiene citas de Zotero. Inserta citas con zotero_insert_citation_docx antes de generar la bibliografía.'
+        );
+      }
+      const toFetch = [...new Set(cited.filter((c) => !c.itemData && c.key).map((c) => c.key))];
+      const fetched = toFetch.length > 0 ? await zotero.getByKeys(toFetch) : [];
+      const fetchedByKey = new Map(fetched.map((item) => [String(item.id), item]));
+      const items = [];
+      const unresolved = [];
+      for (const c of cited) {
+        if (c.itemData) items.push({ ...c.itemData, id: c.key || `doc-${c.itemData.id}` });
+        else if (fetchedByKey.has(c.key)) items.push(fetchedByKey.get(c.key));
+        else unresolved.push(c.key);
+      }
+      if (unresolved.length > 0) {
+        return fail(
+          `No se pudieron resolver en Zotero las citas del documento con key: ${[...new Set(unresolved)].join(', ')}.`
+        );
+      }
 
-    const bib = await citationManager.bibliography({
-      style,
-      locale: DEFAULT_LOCALE,
-      items,
-      format: 'plaintext',
+      const bib = await citationManager.bibliography({
+        style,
+        locale: DEFAULT_LOCALE,
+        items,
+        format: 'plaintext',
     });
 
     const result = upsertBibliography(ctx.doc, styleUrl, bib.bibliography);
@@ -433,11 +430,13 @@ server.tool(
     if (bib.bibliography) payload.bibliography = bib.bibliography;
 
     if (args.apply === true) {
-      await saveDocx(ctx, abs);
+      const { backupPath } = await saveDocx(ctx, abs, { backup: BACKUP });
       payload.written = true;
+      if (backupPath) payload.backupPath = backupPath;
     }
 
     return ok(payload);
+    });
   })
 );
 

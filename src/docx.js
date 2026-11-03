@@ -14,12 +14,11 @@
 //   { 'w:p': [ ...hijos ], ':@': { '@_w:rsidR': '00AB' } }
 //   { '#text': 'texto escapado' }
 
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
-import path from 'node:path';
 import JSZip from 'jszip';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
+import { MAX_FILE_BYTES, readFileForEdit, validateFilePath, writeFileAtomic } from './file-io.js';
 
-export const MAX_FILE_BYTES = 2 * 1024 * 1024;
+export { MAX_FILE_BYTES };
 
 const DOCUMENT_PART = 'word/document.xml';
 const ATTRS = ':@';
@@ -49,18 +48,7 @@ const BUILDER_OPTS = {
 // ---------------------------------------------------------------------------
 
 export function validateDocxPath(filePath) {
-  const ext = path.extname(String(filePath)).toLowerCase();
-  if (ext !== '.docx') {
-    throw new Error(`filePath debe ser un archivo .docx (se recibió "${ext || '(sin extensión)'}").`);
-  }
-  const abs = path.resolve(String(filePath));
-  if (!existsSync(abs)) throw new Error(`El archivo no existe: ${abs}`);
-  const st = statSync(abs);
-  if (!st.isFile()) throw new Error(`La ruta no es un archivo: ${abs}`);
-  if (st.size > MAX_FILE_BYTES) {
-    throw new Error('El archivo .docx supera el límite de 2 MB; no se modifica.');
-  }
-  return abs;
+  return validateFilePath(filePath, { extensions: ['.docx'] });
 }
 
 /** Abre un .docx desde un buffer y parsea word/document.xml. */
@@ -75,9 +63,11 @@ export async function loadDocx(buffer) {
   return { zip, doc };
 }
 
+/** Abre un .docx del disco; guarda su huella (mtime/tamaño) para saveDocx. */
 export async function openDocx(filePath) {
-  const ctx = await loadDocx(readFileSync(filePath));
-  return { ...ctx, filePath };
+  const { data, fingerprint } = readFileForEdit(filePath);
+  const ctx = await loadDocx(data);
+  return { ...ctx, filePath, fingerprint };
 }
 
 export function parseDocumentXml(xmlStr) {
@@ -93,10 +83,21 @@ export function serializeDocument(doc) {
   return xml;
 }
 
-export async function saveDocx({ zip, doc }, filePath) {
+/** Genera el .docx modificado como buffer. */
+export async function buildDocxBuffer({ zip, doc }) {
   zip.file(DOCUMENT_PART, serializeDocument(doc));
-  const outBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  writeFileSync(filePath, outBuffer);
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+/**
+ * Guarda el .docx de forma atómica. Si el contexto viene de openDocx, no
+ * escribe cuando el archivo cambió en disco desde que se abrió.
+ * @returns {Promise<{backupPath: string|null}>}
+ */
+export async function saveDocx(ctx, filePath, { backup = true } = {}) {
+  const buffer = await buildDocxBuffer(ctx);
+  const expected = ctx.filePath === filePath ? ctx.fingerprint : undefined;
+  return writeFileAtomic(filePath, buffer, { expected, backup });
 }
 
 // ---------------------------------------------------------------------------

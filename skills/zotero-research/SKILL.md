@@ -65,6 +65,12 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath`, `style` y `apply: true`.
 2. Inserta (o actualiza si ya existe) el campo `ADDIN ZOTERO_BIBL` al final del documento.
 
+### Escritura segura
+
+- Pide al usuario que **cierre el documento en Word** antes de escribir con `apply: true`: si está abierto, la herramienta falla con "el archivo está abierto o bloqueado" y no modifica nada.
+- Si la herramienta responde "El archivo cambió desde que se leyó", vuelve a ejecutarla (no hay que forzar nada).
+- Antes de sobrescribir se guarda `<archivo>.bak` con la versión anterior (salvo `ZOTERO_MCP_BACKUP=false`); la ruta aparece en `backupPath`.
+
 ### Flujo típico en Word
 
 1. `zotero_read_docx` → conocer la estructura.
