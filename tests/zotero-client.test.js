@@ -175,3 +175,24 @@ test('findExisting encuentra por DOI (también en Extra) y por título', async (
     restore();
   }
 });
+
+test('getByKeys pide más de 100 keys en tandas y junta los resultados', async () => {
+  const calls = [];
+  const restore = mockFetch((url) => {
+    calls.push(url);
+    const keys = new URL(url).searchParams.get('itemKey').split(',');
+    // Simula una key inexistente: no aparece en la respuesta.
+    return { ok: true, json: async () => keys.filter((k) => k !== 'K0000150').map((k) => ({ id: `http://zotero.org/users/1/items/${k}`, type: 'book', title: k })) };
+  });
+  try {
+    const keys = Array.from({ length: 250 }, (_, i) => `K${String(i).padStart(7, '0')}`);
+    const items = await new ZoteroClient().getByKeys([...keys, keys[0], '  ', null]);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls.map((u) => new URL(u).searchParams.get('itemKey').split(',').length), [100, 100, 50]);
+    assert.equal(items.length, 249);
+    assert.equal(items[249 - 1].id, 'K0000249');
+    assert.ok(!items.some((i) => i.id === 'K0000150'));
+  } finally {
+    restore();
+  }
+});
