@@ -278,6 +278,8 @@ CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push to `main` and
 The structure follows the complete Antigravity plugin pattern
 (`plugin.json`, `mcp_config.json`, `server/` → `src/`, `skills/`, `scripts/`).
 
+In `src/`: `server.js` is the entry point (stdio), `app.js` builds the MCP server, `context.js` reads the configuration and creates the clients, and `tools/` registers the tools by area: `library.js` (search and collections), `citations.js` (citations and Markdown), `word.js` (`.docx`) and `external.js` (external search and saving to the library). The Zotero clients (`zotero-client.js`, `zotero-connector.js`, `external-search.js`) and the document logic (`cite.js`, `docx.js`, `bib-section.js`, `file-io.js`) do not depend on MCP. `tests/server.test.js` tests the full server in memory with mocked clients.
+
 ## License
 
 MIT — see `LICENSE`. CSL styles and locales are CC-BY-SA 3.0 (see "Included styles and locales").
