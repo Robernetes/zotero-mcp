@@ -38,7 +38,8 @@ La bibliografía se actualiza sola al añadir citas:
    - `filePath` = ruta del documento Markdown, y
    - `apply: true` para escribir el archivo.
 3. La sección de referencias se regenera a partir de las citas registradas. Si el documento aún no tiene sección, pasa `createSection: true` para crearla al final (por defecto `## Bibliografía`).
-4. Para revisar sin escribir, omite `apply` (actúa en modo `dryRun` y devuelve el diff).
+4. Para revisar sin escribir, omite `apply` (actúa en modo `dryRun` y devuelve el diff del documento completo).
+5. El registro de citas vive en memoria y se pierde si el servidor se reinicia. Con el registro vacío no se escribe nada; si la nueva bibliografía tiene menos referencias que la sección actual, la herramienta se niega a escribir salvo con `force: true`. Ante cualquiera de los dos avisos, vuelve a citar con `zotero_cite` (o usa `keys`) en lugar de forzar.
 
 ## 5. Trabajar con documentos Word (.docx)
 
@@ -58,11 +59,19 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` al final del párrafo indicado.
 3. El campo incluye el CSL JSON del item para que Zotero pueda renderizarlo sin conexión.
 4. `noteIndex` y `citationID` se asignan automáticamente por orden de inserción.
+5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después del párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
+6. Las citas ya insertadas no se reescriben: si una cita nueva cambia la numeración o la desambiguación de las anteriores, el plugin de Zotero las actualiza al pulsar *Refresh* en Word.
 
 ### Actualizar la bibliografía
 
 1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath`, `style` y `apply: true`.
 2. Inserta (o actualiza si ya existe) el campo `ADDIN ZOTERO_BIBL` al final del documento.
+
+### Escritura segura
+
+- Pide al usuario que **cierre el documento en Word** antes de escribir con `apply: true`: si está abierto, la herramienta falla con "el archivo está abierto o bloqueado" y no modifica nada.
+- Si la herramienta responde "El archivo cambió desde que se leyó", vuelve a ejecutarla (no hay que forzar nada).
+- Antes de sobrescribir se guarda `<archivo>.bak` con la versión anterior (salvo `ZOTERO_MCP_BACKUP=false`); la ruta aparece en `backupPath`.
 
 ### Flujo típico en Word
 

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { updateBibliographySection, extractBibliographySection, isReferenceHeading } from '../src/bib-section.js';
+import {
+  updateBibliographySection,
+  extractBibliographySection,
+  isReferenceHeading,
+  countReferenceEntries,
+} from '../src/bib-section.js';
 
 test('reemplaza la sección existente y conserva el resto del documento', () => {
   const doc = [
@@ -24,6 +29,41 @@ test('reemplaza la sección existente y conserva el resto del documento', () => 
   assert.ok(res.text.includes('## Anexo'));
   assert.ok(res.text.includes('Contenido final.'));
   assert.equal(res.text.split('\n').pop(), '');
+  // Todo lo anterior y posterior a la sección queda exactamente igual.
+  assert.equal(
+    res.text,
+    [
+      '# Mi documento',
+      '',
+      'Texto con cita [1].',
+      '',
+      '## Bibliografía',
+      '',
+      'Smith, J. (2020). Nuevo título.',
+      '',
+      '## Anexo',
+      'Contenido final.',
+      '',
+    ].join('\n')
+  );
+});
+
+test('conserva el contenido previo cuando la sección es la última del documento', () => {
+  const doc = '# Título\r\n\r\nPárrafo uno.\r\n\r\nPárrafo dos.\r\n\r\n## Referencias\r\n\r\nVieja.\r\n';
+  const res = updateBibliographySection(doc, 'A.\n\nB.');
+  assert.equal(
+    res.text,
+    '# Título\r\n\r\nPárrafo uno.\r\n\r\nPárrafo dos.\r\n\r\n## Referencias\r\n\r\nA.\r\n\r\nB.\r\n'
+  );
+});
+
+test('countReferenceEntries cuenta párrafos e ítems de lista', () => {
+  assert.equal(countReferenceEntries(''), 0);
+  assert.equal(countReferenceEntries('A, B. (2020). Uno.\n\nC, D. (2021). Dos.'), 2);
+  assert.equal(countReferenceEntries('- Uno.\n- Dos.\n- Tres.'), 3);
+  assert.equal(countReferenceEntries('[1] Uno.\n[2] Dos.\n\n[3] Tres.'), 3);
+  // Una referencia larga partida en varias líneas cuenta como una.
+  assert.equal(countReferenceEntries('Smith, J. (2020). Un título\nmuy largo. Editorial.'), 1);
 });
 
 test('reconoce variantes de encabezado sin # y con #', () => {

@@ -53,6 +53,9 @@ The server works out of the box (default values). Optional variables
 | `ZOTERO_API_URL` | `http://127.0.0.1:23119/api` | Zotero local API URL |
 | `ZOTERO_DEFAULT_STYLE` | `apa` | Default CSL style |
 | `ZOTERO_LOCALE` | `es-ES` | Default style locale |
+| `ZOTERO_MCP_BACKUP` | `true` | Copy the document to `<file>.bak` before overwriting it (`false` to disable) |
+
+Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + rename), are refused if the file changed on disk since it was read, and are serialized per file, so parallel calls do not overwrite each other. The `.bak` keeps only the previous version.
 
 ## MCP Tools
 
@@ -223,7 +226,11 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 | `zotero_cite` → "Item not found with key..." | Wrong key or deleted item | Search again with `zotero_search` and copy the exact `key`. |
 | `zotero_bibliography` → "Unsupported style" | Style not included | Use one of: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (or add the `.csl` file to `src/csl/`). |
 | "No references section found" | Document has no bibliography heading | Pass `createSection: true` to create it at the end. |
-| "filePath must be a .md file..." | `.docx` or other extension was passed | v1 only updates Markdown (`.md`/`.markdown`). |
+| "filePath must be a .md file..." | `.docx` or other extension was passed | `zotero_bibliography` only updates Markdown (`.md`/`.markdown`); for Word use `zotero_update_bibliography_docx`. |
+| "Could not write/read ...: the file is open or locked by another application" | The document is open in Word (or locked by another program) | Close it and run the tool again; the original is not modified. |
+| "The file changed since it was read" | The document was edited or saved while the tool was running | Run the tool again so it works on the latest version. |
+| "No references to write: the citation registry is empty" | The in-memory registry was lost (server restart or style/locale change) | Cite again with `zotero_cite` or pass explicit `keys`. The file is not modified. |
+| "The new bibliography has N references and the current section M" | The new list is shorter than the existing one (partial registry) | Review the `diff` from the dry run and repeat with `force: true` if you really want to replace it. |
 | Numeric citations "reset" | Style changed mid-document | Use the same `style`/`locale` throughout the document (changing style resets numbering). |
 
 ## Development

@@ -6,7 +6,8 @@
       "env": {
         "ZOTERO_API_URL": "${ZOTERO_API_URL}",
         "ZOTERO_DEFAULT_STYLE": "${ZOTERO_DEFAULT_STYLE}",
-        "ZOTERO_LOCALE": "${ZOTERO_LOCALE}"
+        "ZOTERO_LOCALE": "${ZOTERO_LOCALE}",
+        "ZOTERO_MCP_BACKUP": "${ZOTERO_MCP_BACKUP}"
       }
     }
   }

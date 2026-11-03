@@ -73,7 +73,7 @@ export function updateBibliographySection(text, newSection, opts = {}) {
   let restStart = 0;
   while (restStart < rest.length && rest[restStart].trim() === '') restStart++;
 
-  const newLines = [headingLine, '', ...blockLines, '', ...rest.slice(restStart)];
+  const newLines = [...lines.slice(0, idx), headingLine, '', ...blockLines, '', ...rest.slice(restStart)];
 
   return {
     text: newLines.join(eol),
@@ -82,6 +82,20 @@ export function updateBibliographySection(text, newSection, opts = {}) {
     heading: headingLine.trim(),
     removedOldLines: end - (idx + 1),
   };
+}
+
+/**
+ * Cuenta (de forma aproximada) las referencias de una sección: cada párrafo
+ * separado por línea en blanco es una referencia, salvo que todas sus líneas
+ * sean ítems de lista ("- ", "1. ", "[1] "), en cuyo caso cuenta cada línea.
+ */
+export function countReferenceEntries(sectionText) {
+  const paragraphs = String(sectionText ?? '')
+    .split(/\r?\n\s*\r?\n/)
+    .map((p) => p.split(/\r?\n/).filter((l) => l.trim()))
+    .filter((p) => p.length > 0);
+  const isListItem = (l) => /^\s*([-*+]|\d+[.)]|\[\d+\])\s+/.test(l);
+  return paragraphs.reduce((n, p) => n + (p.length > 1 && p.every(isListItem) ? p.length : 1), 0);
 }
 
 /**

@@ -53,6 +53,9 @@ El servidor funciona sin configuración (usa los valores por defecto). Variables
 | `ZOTERO_API_URL` | `http://127.0.0.1:23119/api` | URL de la API local de Zotero |
 | `ZOTERO_DEFAULT_STYLE` | `apa` | Estilo CSL por defecto |
 | `ZOTERO_LOCALE` | `es-ES` | Idioma por defecto del estilo |
+| `ZOTERO_MCP_BACKUP` | `true` | Copiar el documento a `<archivo>.bak` antes de sobrescribirlo (`false` para desactivarlo) |
+
+Las escrituras en `.md`/`.docx` son atómicas (archivo temporal en la misma carpeta + renombrado), se rechazan si el archivo cambió en disco desde que se leyó y se serializan por archivo, de modo que las llamadas en paralelo no se pisan. El `.bak` conserva solo la versión anterior.
 
 ## Herramientas MCP
 
@@ -223,7 +226,11 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 | `zotero_cite` → "No se encontró un item con key..." | Key mal copiada o item borrado | Vuelve a buscarlo con `zotero_search` y copia la `key` exacta. |
 | `zotero_bibliography` → "Estilo no soportado" | Estilo no incluido | Usa uno de: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (o agrega el `.csl` en `src/csl/`). |
 | "No se encontró una sección de referencias" | El documento no tiene encabezado de bibliografía | Pasa `createSection: true` para crearla al final. |
-| "filePath debe ser un archivo .md..." | Se pasó `.docx` u otra extensión | v1 solo actualiza Markdown (`.md`/`.markdown`). |
+| "filePath debe ser un archivo .md..." | Se pasó `.docx` u otra extensión | `zotero_bibliography` solo actualiza Markdown (`.md`/`.markdown`); para Word usa `zotero_update_bibliography_docx`. |
+| "No se pudo escribir/leer ...: el archivo está abierto o bloqueado por otra aplicación" | El documento está abierto en Word (u otro programa lo bloquea) | Ciérralo y vuelve a ejecutar la herramienta; el original no se modifica. |
+| "El archivo cambió desde que se leyó" | El documento se editó o guardó mientras se ejecutaba la herramienta | Vuelve a ejecutar la herramienta para trabajar sobre la versión más reciente. |
+| "No hay referencias que escribir: el registro de citas está vacío" | Se perdió el registro en memoria (reinicio del servidor o cambio de style/locale) | Cita de nuevo con `zotero_cite` o pasa `keys` explícitas. El archivo no se modifica. |
+| "La nueva bibliografía tiene N referencias y la sección actual M" | La lista nueva es más corta que la existente (registro parcial) | Revisa el `diff` del dryRun y repite con `force: true` si de verdad quieres reemplazarla. |
 | Citas numéricas "reiniciadas" | Se cambió de estilo a mitad de documento | Usa el mismo `style`/`locale` en todo el documento (cambiar de estilo reinicia la numeración). |
 
 ## Desarrollo
