@@ -19,8 +19,16 @@ Si la biblioteca no tiene lo que el usuario necesita, o pide fuentes nuevas, usa
 
 1. `query` con el tema, título o autores (en el idioma de las publicaciones buscadas; en inglés suele haber más resultados), o `doi` si ya lo conoces. Filtra con `yearFrom`/`yearTo` si pide fuentes recientes, y usa `includeAbstract: true` para juzgar la relevancia.
 2. Presenta título, autores, año, revista y DOI. Señala cuáles tienen acceso abierto (`openAccessUrl`) y cuáles ya están en la biblioteca (`inLibrary.key`): esas se pueden citar directamente con su key.
-3. Las que no están en la biblioteca **no se pueden citar todavía**: el MCP no guarda en Zotero. Pide al usuario que las añada (en Zotero: botón de la varita, *Añadir elemento por identificador*, pegando el DOI) y después búscalas con `zotero_search` para obtener la key.
+3. Las que no están en la biblioteca **no se pueden citar todavía**: hay que guardarlas antes con `zotero_add_item` (ver abajo).
 4. Si llega un aviso de que OpenAlex no respondió, los resultados son de Crossref; menciónalo solo si importa (p. ej. no hay datos de acceso abierto).
+
+### Guardar en la biblioteca
+
+1. Guarda **solo lo que el usuario elija**: nunca guardes resultados por tu cuenta ni en bloque sin que lo pida.
+2. Llama `zotero_add_item` con `doi` (o `openAlexId` si no tiene DOI), y `collectionKey` (de `zotero_list_collections`) y `tags` si el usuario los indica. Sin `apply` devuelve una vista previa: muéstrale título, autores, año y la colección destino (`target`).
+3. Cuando confirme, repite la llamada con `apply: true`. La respuesta trae la `key` del item nuevo: úsala directamente con `zotero_cite` o `zotero_insert_citation_docx`.
+4. Si responde `saved: false` porque ya existe (`inLibrary.key`), usa esa key; no fuerces `allowDuplicate` salvo que el usuario lo pida.
+5. Requiere Zotero abierto. Sin `collectionKey` se guarda en la colección seleccionada en Zotero: si el usuario no dijo dónde, pregúntale o díselo en la vista previa.
 
 ## 2. Obtener detalles
 
@@ -96,8 +104,8 @@ Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan cor
 ## Reglas
 
 - No inventes citas ni referencias: verifica siempre con `zotero_search` / `zotero_get_item` que el item exista.
-- No modifiques la librería de Zotero: el MCP solo lee.
-- No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): primero el usuario debe añadirlos a Zotero.
+- No modifiques la librería de Zotero salvo para añadir, con `zotero_add_item` y confirmación del usuario, los items que él elija.
+- No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): guárdalos antes con `zotero_add_item`.
 - No cambies el estilo de citación a mitad de documento.
 - Respeta el idioma del documento (`locale: es-ES` para documentos en español).
 - En documentos Word, no uses las herramientas de Markdown (zotero_cite textual en el .docx) — usa las de docx.

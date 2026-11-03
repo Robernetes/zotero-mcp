@@ -17,11 +17,11 @@ agy plugin install https://github.com/Robernetes/zotero-mcp
 - **Answer questions about your library**: search for sources on a topic, filter by type (articles, books, theses) or collection, and get full details of any item (abstract, authors, year, URL, DOI).
 - **Cite correctly**: generate in-text citations with the right style (APA, MLA, Chicago, Harvard, IEEE, Vancouver) and language (es-ES, en-US), with page locators (`(Author, 2020, p. 15)`), prefixes and suffixes.
 - **Write academic documents with real references**: the AI inserts citations and keeps the bibliography synced: add citations with `zotero_cite` and the document's references section regenerates with `zotero_bibliography`.
-- **Find new sources**: search outside your library (OpenAlex and Crossref) by topic, title, author or DOI, and see which results are already in your library.
+- **Find new sources**: search outside your library (OpenAlex and Crossref) by topic, title, author or DOI, see which results are already in your library, and save the ones you choose (by DOI) into a collection.
 - **Verify sources**: never invents references; every item is validated against Zotero before citing.
 - **Diagnostics**: `zotero_status` tells you whether Zotero is available.
 
-**Limits:** read-only access to the Zotero library (cannot add/edit/delete items). Results from the external search must be added to Zotero by you (e.g. with *Add Item by Identifier* and the DOI) before they can be cited.
+**Limits:** the MCP can only **add** new items (`zotero_add_item`, Zotero must be open); it never edits or deletes existing items. It saves metadata only (no PDFs).
 
 ## Requirements
 
@@ -67,13 +67,14 @@ Writes to `.md`/`.docx` files are atomic (temporary file in the same folder + re
 | `zotero_status` | Check connection to the local API. |
 | `zotero_search` | Search items (`query`, `qmode`, `itemType`, `collectionKey`, `limit`, `sort`, `direction`). |
 | `zotero_get_item` | Full item details by `key`. |
-| `zotero_list_collections` | List collections. |
+| `zotero_list_collections` | List collections (`key`, `name`, `parentKey`). |
 | `zotero_cite` | Textual citation (`key`, `style`, `locale`, `locator`, `label`, `prefix`, `suffix`, `register`). |
 | `zotero_bibliography` | Bibliography from registered citations or explicit `keys`; with `filePath` + `apply: true` updates the references section of a `.md` file. |
 | `zotero_read_docx` | Read paragraphs from a `.docx` (index, text, whether it already has Zotero fields). |
 | `zotero_insert_citation_docx` | Insert an `ADDIN ZOTERO_ITEM CSL_CITATION` field at the end of a paragraph in a `.docx`. |
 | `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx` (one paragraph per reference). |
 | `zotero_find_external` | Search publications **outside** the library in OpenAlex/Crossref (`query` or `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` tells whether each one is already in Zotero. |
+| `zotero_add_item` | Save a publication to the library by `doi` or `openAlexId`, optionally into `collectionKey` with `tags`. Preview without `apply: true`; never saves duplicates unless `allowDuplicate: true`. |
 
 ## Usage examples (JSON)
 
@@ -214,6 +215,15 @@ The citation is inserted as an `ADDIN ZOTERO_ITEM CSL_CITATION` field with the i
 
 Each result includes `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` and `inLibrary` (`{ key, title }` if the item is already in Zotero, matched by DOI or exact title; `null` otherwise). With `source: "auto"` (default) it uses OpenAlex and falls back to Crossref if OpenAlex fails; a DOI is looked up in Crossref and then OpenAlex. Nothing is saved to Zotero.
 
+### 11. Save to your library
+
+```json
+{ "tool": "zotero_add_item", "args": { "doi": "10.1017/S0144686X19000230", "collectionKey": "2HTJ2CWF", "tags": ["thesis"] } }
+{ "tool": "zotero_add_item", "args": { "doi": "10.1017/S0144686X19000230", "collectionKey": "2HTJ2CWF", "tags": ["thesis"], "apply": true } }
+```
+
+Without `apply: true` it returns a preview: the metadata that will be saved, the destination collection and whether the item is already in the library. With `apply: true` it saves it and returns its `key`, ready for `zotero_cite`. Metadata comes from Crossref (or OpenAlex for DOIs Crossref does not have, and for `openAlexId`) and is imported by Zotero's own *CSL JSON* translator through the connector server (`/connector/import`, the same local server the browser extension uses). Without `collectionKey` the item goes to the collection currently selected in Zotero. Saving selects the destination collection and the new item in the Zotero window. If the item already exists (same DOI or title) nothing is saved and its `key` is returned. The connector is an internal Zotero interface, tested with Zotero 9.
+
 ## Included skill
 
 `zotero-research` teaches the agent when and how to use each tool (search, citation and
@@ -228,7 +238,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 
 ## Security
 
-- **Read-only** access to the Zotero library: the MCP does not add, edit or delete items.
+- The only change to the Zotero library is **adding** new items with `zotero_add_item` and explicit `apply: true`; existing items are never edited or deleted.
 - `zotero_find_external` only sends the search text or DOI to OpenAlex/Crossref (plus `OPENALEX_API_KEY` and `ZOTERO_MCP_CONTACT_EMAIL` if you set them); never the content of your documents or library.
 - The only write operations are the **references section** of Markdown files and **Zotero fields** in Word files (.docx), and only with explicit `apply: true`.
 - No secrets in the repository; credentials (if any) go through environment variables.
@@ -248,6 +258,8 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 | "No references to write: the citation registry is empty" | The in-memory registry was lost (server restart or style/locale change) | Cite again with `zotero_cite` or pass explicit `keys`. The file is not modified. |
 | "The new bibliography has N references and the current section M" | The new list is shorter than the existing one (partial registry) | Review the `diff` from the dry run and repeat with `force: true` if you really want to replace it. |
 | `zotero_find_external` → "OpenAlex: HTTP 429, free daily quota used up" | The shared OpenAlex quota for your IP ran out | With `source: "auto"` it already falls back to Crossref; for your own quota set `OPENALEX_API_KEY`. |
+| `zotero_add_item` → "Could not connect to Zotero" | Zotero is closed | Open Zotero: saving requires the desktop app. |
+| `zotero_add_item` → "There are N collections named ..." | Two collections with the same name and parent | Rename one in Zotero, or save without `collectionKey` after selecting the collection in Zotero. |
 | Numeric citations "reset" | Style changed mid-document | Use the same `style`/`locale` throughout the document (changing style resets numbering). |
 
 ## Development

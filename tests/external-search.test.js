@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ExternalSearch, fromCrossref, fromOpenAlex, abstractFromInvertedIndex } from '../src/external-search.js';
+import {
+  ExternalSearch,
+  fromCrossref,
+  fromOpenAlex,
+  abstractFromInvertedIndex,
+  crossrefToCsl,
+  openAlexToCsl,
+} from '../src/external-search.js';
 
 function mockFetch(handler) {
   const original = globalThis.fetch;
@@ -178,6 +185,86 @@ test('lookupDoi informa cuando ninguna fuente tiene el DOI', async () => {
   try {
     await assert.rejects(() => new ExternalSearch().lookupDoi('10.1234/nada'), /No se encontró el DOI 10\.1234\/nada/);
     await assert.rejects(() => new ExternalSearch().lookupDoi('no-es-doi'), /no parece un DOI/);
+  } finally {
+    m.restore();
+  }
+});
+
+test('crossrefToCsl produce CSL válido para el traductor de Zotero', () => {
+  const csl = crossrefToCsl({
+    ...CR_WORK,
+    DOI: '10.5220/0010395700002931',
+    subtitle: ['A Review'],
+    'container-title': ['Proceedings ICT4AWE'],
+    'short-container-title': ['Proceedings ICT4AWE'],
+    event: { name: 'ICT4AWE 2021' },
+    page: '12-20',
+    ISSN: ['1234-5678', '8765-4321'],
+    reference: [{ key: 'ref1' }],
+  });
+  assert.equal(csl.type, 'paper-conference');
+  assert.equal(csl.title, 'From Age to Age: Gerontographics: A Review');
+  assert.deepEqual(csl.author, [{ family: 'Paul', given: 'Cosmina' }, { literal: 'Grupo de Trabajo' }]);
+  assert.deepEqual(csl.issued, { 'date-parts': [[2021, 4]] });
+  assert.equal(csl['event-title'], 'ICT4AWE 2021');
+  assert.equal(csl.ISSN, '1234-5678');
+  assert.equal(csl.URL, 'https://doi.org/10.5220/0010395700002931');
+  assert.equal(csl.abstract, 'Older adults adopt technology.');
+  assert.ok(!('container-title-short' in csl), 'título corto igual al completo');
+  assert.ok(!('reference' in csl) && !('license' in csl), 'solo variables CSL');
+  assert.equal(crossrefToCsl({ type: 'journal-article', title: ['T'], DOI: '10.1000/ABC' }).DOI, '10.1000/ABC');
+  assert.equal(crossrefToCsl({ type: 'monograph', title: ['T'] }).type, 'book');
+  assert.equal(crossrefToCsl({ type: 'algo-raro', title: ['T'] }).type, 'document');
+  const tesis = crossrefToCsl({ type: 'dissertation', title: ['T'], institution: [{ name: 'Universidad X' }] });
+  assert.equal(tesis.type, 'thesis');
+  assert.equal(tesis.publisher, 'Universidad X');
+});
+
+test('openAlexToCsl divide nombres, arma páginas y fecha', () => {
+  const csl = openAlexToCsl({
+    ...OA_WORK,
+    publication_date: '2019-03-19',
+    biblio: { volume: '40', issue: '7', first_page: '1550', last_page: '1576' },
+    language: 'en',
+    primary_location: { ...OA_WORK.primary_location, source: { ...OA_WORK.primary_location.source, type: 'journal', issn_l: '0144-686X' } },
+  });
+  assert.equal(csl.type, 'article-journal');
+  assert.deepEqual(csl.author[0], { given: 'Arlene J.', family: 'Astell' });
+  assert.deepEqual(csl.issued, { 'date-parts': [[2019, 3, 19]] });
+  assert.equal(csl.page, '1550-1576');
+  assert.equal(csl['container-title'], 'Ageing and Society');
+  assert.equal(csl.ISSN, '0144-686X');
+  assert.equal(csl.DOI, '10.1017/s0144686x19000230');
+  assert.equal(csl.abstract, 'Older adults use technology');
+  const repo = openAlexToCsl({ id: 'https://openalex.org/W9', display_name: 'Tesis', type: 'article', publication_year: 2020, primary_location: { landing_page_url: 'https://repo.edu/1', source: { type: 'repository', display_name: 'Repo' } } });
+  assert.equal(repo.type, 'article');
+  assert.ok(!('container-title' in repo));
+  assert.equal(repo.URL, 'https://repo.edu/1');
+  assert.deepEqual(repo.issued, { 'date-parts': [[2020]] });
+});
+
+test('fetchCsl acepta openAlexId con o sin URL y rechaza ids inválidos', async () => {
+  const m = mockFetch(() => json(OA_WORK));
+  try {
+    const s = new ExternalSearch();
+    const r = await s.fetchCsl({ openAlexId: 'https://openalex.org/w123' });
+    assert.equal(m.calls[0].url, 'https://api.openalex.org/works/W123');
+    assert.equal(r.source, 'openalex');
+    await assert.rejects(() => s.fetchCsl({ openAlexId: 'X1' }), /no parece un id de OpenAlex/);
+    await assert.rejects(() => s.fetchCsl({}), /Indica doi u openAlexId/);
+  } finally {
+    m.restore();
+  }
+});
+
+test('fetchCsl por DOI conserva las mayúsculas con que se escribió', async () => {
+  const m = mockFetch(() => json({ message: { type: 'journal-article', title: ['T'], DOI: '10.1017/s0144686x19000230' } }));
+  try {
+    const { source, csl } = await new ExternalSearch().fetchCsl({ doi: 'https://doi.org/10.1017/S0144686X19000230' });
+    assert.equal(source, 'crossref');
+    assert.equal(csl.DOI, '10.1017/S0144686X19000230');
+    assert.equal(csl.URL, 'https://doi.org/10.1017/S0144686X19000230');
+    assert.equal(csl.type, 'article-journal');
   } finally {
     m.restore();
   }
