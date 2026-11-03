@@ -3,6 +3,7 @@
 // Solo lectura: nunca modifica la librería.
 
 export const DEFAULT_BASE_URL = 'http://127.0.0.1:23119/api';
+const KEYS_PER_REQUEST = 100;
 
 export class ZoteroError extends Error {
   constructor(message) {
@@ -95,20 +96,26 @@ export class ZoteroClient {
   }
 
   /**
-   * Devuelve items en formato CSL JSON por lista de keys (máx. 100).
+   * Devuelve items en formato CSL JSON por lista de keys, sin límite de cantidad.
    * Los CSL JSON son la entrada directa del motor de citas (citeproc-js).
+   * Las keys que no existan simplemente no aparecen en el resultado.
    */
   async getByKeys(keys) {
-    const list = [...new Set((keys || []).filter((k) => k && String(k).trim()))].slice(0, 100);
+    const list = [...new Set((keys || []).map((k) => String(k ?? '').trim()).filter(Boolean))];
     if (list.length === 0) return [];
-    const params = new URLSearchParams();
-    params.set('itemKey', list.join(','));
-    params.set('format', 'csljson');
-    const data = await this._getJSON(`/users/0/items?${params.toString()}`);
-    if (!Array.isArray(data)) return [];
-    // La API local devuelve CSL JSON con id = URI completa del item; citeproc-js
-    // necesita la key corta como id.
-    return data.map(normalizeCslId);
+    // La API local no limita las keys por petición, pero se piden en tandas
+    // para que la URL no crezca sin control (9 caracteres por key).
+    const items = [];
+    for (let i = 0; i < list.length; i += KEYS_PER_REQUEST) {
+      const params = new URLSearchParams();
+      params.set('itemKey', list.slice(i, i + KEYS_PER_REQUEST).join(','));
+      params.set('format', 'csljson');
+      const data = await this._getJSON(`/users/0/items?${params.toString()}`);
+      // La API local devuelve CSL JSON con id = URI completa del item; citeproc-js
+      // necesita la key corta como id.
+      if (Array.isArray(data)) items.push(...data.map(normalizeCslId));
+    }
+    return items;
   }
 
   /**
