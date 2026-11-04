@@ -2,6 +2,3 @@
 .env.*
 !.env.example
 node_modules/
-target/
-dist/
-logs/

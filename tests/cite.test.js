@@ -7,7 +7,11 @@ import {
   resolveStyleName,
   zoteroStyleId,
   styleNameFromZoteroId,
+  AVAILABLE_STYLES,
+  LOCALES,
+  resolveLocale,
 } from '../src/cite.js';
+import { readdirSync } from 'node:fs';
 
 const ITEMS = [
   {
@@ -261,4 +265,30 @@ test('la bibliografía numérica separa el número de la referencia', async () =
   const manager = makeManager();
   const bib = await manager.bibliography({ keys: ['AAA1'], style: 'ieee', locale: 'en-US', format: 'plaintext' });
   assert.ok(bib.entries[0].startsWith('[1] J. Smith'), bib.entries[0]);
+});
+
+test('los estilos y locales disponibles salen de src/csl y src/locales', () => {
+  const csl = readdirSync(STYLES_DIR).filter((f) => f.endsWith('.csl')).map((f) => f.slice(0, -4)).sort();
+  assert.deepEqual(AVAILABLE_STYLES, csl);
+  for (const s of ['apa', 'mla', 'chicago-author-date', 'harvard-cite-them-right', 'ieee', 'vancouver']) {
+    assert.ok(AVAILABLE_STYLES.includes(s), s);
+  }
+  assert.ok(LOCALES.includes('es-ES') && LOCALES.includes('en-US'), LOCALES.join(','));
+});
+
+test('resolveLocale usa el mismo locale, uno del mismo idioma o en-US', () => {
+  const available = ['de-DE', 'en-US', 'es-ES'];
+  assert.equal(resolveLocale('es-ES', available), 'es-ES');
+  assert.equal(resolveLocale('ES-es', available), 'es-ES');
+  assert.equal(resolveLocale('es-MX', available), 'es-ES');
+  assert.equal(resolveLocale('es', available), 'es-ES');
+  assert.equal(resolveLocale('en-GB', available), 'en-US');
+  assert.equal(resolveLocale('fr-FR', available), 'en-US');
+  assert.equal(resolveLocale(undefined, available), 'es-ES');
+});
+
+test('un locale de otro país del mismo idioma cita en ese idioma, no en inglés', async () => {
+  const manager = makeManager();
+  const res = await manager.cite({ key: 'AAA1', style: 'apa', locale: 'es-MX' });
+  assert.equal(res.locale, 'es-ES');
 });

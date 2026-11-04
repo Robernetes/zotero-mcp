@@ -4,7 +4,7 @@
 // asignan números consistentes (estilos numéricos) y la bibliografía
 // se regenera automáticamente desde el registro.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import citeprocModule from 'citeproc';
@@ -15,21 +15,44 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STYLES_DIR = path.join(__dirname, 'csl');
 export const LOCALES_DIR = path.join(__dirname, 'locales');
 
-export const STYLES = [
-  'apa',
-  'mla',
-  'chicago-author-date',
-  'harvard-cite-them-right',
-  'harvard',
-  'ieee',
-  'vancouver',
-];
+/**
+ * Nombres de los archivos de una carpeta que siguen el patrón `re` (grupo 1),
+ * ordenados. Así basta con copiar un .csl o un locale a su carpeta (y reiniciar
+ * el cliente MCP) para que quede disponible.
+ */
+function listNames(dir, re) {
+  try {
+    return readdirSync(dir)
+      .map((f) => f.match(re)?.[1])
+      .filter(Boolean)
+      .sort();
+  } catch {
+    return [];
+  }
+}
 
 const STYLE_ALIASES = { harvard: 'harvard-cite-them-right' };
-export const AVAILABLE_STYLES = ['apa', 'mla', 'chicago-author-date', 'harvard-cite-them-right', 'ieee', 'vancouver'];
-
-export const LOCALES = ['es-ES', 'en-US'];
+/** Estilos de src/csl/ (<nombre>.csl). */
+export const AVAILABLE_STYLES = listNames(STYLES_DIR, /^([\w-]+)\.csl$/);
+/** Locales de src/locales/ (locales-<código>.xml). */
+const LOCALE_FILE = /^locales-([A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*)\.xml$/;
+export const LOCALES = listNames(LOCALES_DIR, LOCALE_FILE);
 const LOCALE_FALLBACK = 'en-US';
+
+/**
+ * Locale disponible para el pedido: el mismo (sin distinguir mayúsculas), si no
+ * uno del mismo idioma (es-MX → es-ES) y, como último recurso, en-US.
+ */
+export function resolveLocale(locale, available = LOCALES) {
+  const wanted = String(locale || 'es-ES').trim();
+  const lower = wanted.toLowerCase();
+  const exact = available.find((l) => l.toLowerCase() === lower);
+  if (exact) return exact;
+  const lang = lower.split(/[-_]/)[0];
+  const sameLang = available.find((l) => l.toLowerCase().split('-')[0] === lang);
+  if (sameLang) return sameLang;
+  return available.includes(LOCALE_FALLBACK) ? LOCALE_FALLBACK : available[0] || LOCALE_FALLBACK;
+}
 
 export const FORMATS = ['plaintext', 'markdown', 'html'];
 
@@ -38,8 +61,9 @@ const ZOTERO_STYLE_PREFIX = 'http://www.zotero.org/styles/';
 /** Nombre de estilo soportado (resuelve alias y mayúsculas) o error con la lista disponible. */
 export function resolveStyleName(style) {
   const s = String(style || 'apa').trim().toLowerCase();
-  const name = STYLE_ALIASES[s] || s;
-  if (!AVAILABLE_STYLES.includes(name)) {
+  const wanted = STYLE_ALIASES[s] || s;
+  const name = AVAILABLE_STYLES.find((n) => n.toLowerCase() === wanted);
+  if (!name) {
     throw new Error(`Estilo no soportado: "${style}". Estilos disponibles: ${AVAILABLE_STYLES.join(', ')}.`);
   }
   return name;
@@ -69,6 +93,7 @@ export class CitationManager {
     this.fetchItems = fetchItems;
     this.stylesDir = stylesDir;
     this.localesDir = localesDir;
+    this.locales = localesDir === LOCALES_DIR ? LOCALES : listNames(localesDir, LOCALE_FILE);
     this.itemCache = new Map();
     this.state = null; // { style, locale, engine, citationList, noteIndex }
   }
@@ -78,9 +103,7 @@ export class CitationManager {
   }
 
   _normalizeLocale(locale) {
-    let lang = String(locale || 'es-ES');
-    if (!LOCALES.includes(lang)) lang = LOCALE_FALLBACK;
-    return lang;
+    return resolveLocale(locale, this.locales);
   }
 
   _loadStyle(style) {

@@ -210,10 +210,10 @@ From explicit keys (without affecting the register):
 { "tool": "zotero_bibliography", "args": { "keys": ["ABC12345", "DEF67890"], "style": "ieee" } }
 ```
 
-Update the references section of a Markdown document (with diff preview):
+Update the references section of a Markdown document (without `apply` it only returns the diff preview):
 
 ```json
-{ "tool": "zotero_bibliography", "args": { "filePath": "C:/docs/paper.md", "dryRun": true } }
+{ "tool": "zotero_bibliography", "args": { "filePath": "C:/docs/paper.md" } }
 ```
 
 Write the file:
@@ -223,7 +223,7 @@ Write the file:
 ```
 
 If the document has no references section, create it at the end with `createSection: true`
-(uses the heading `## Bibliography`). Output formats: `plaintext`, `markdown` (default), `html`.
+(uses the heading `## Bibliografía`). Output formats: `plaintext`, `markdown` (default), `html`.
 
 ### Complete typical flow
 
@@ -233,7 +233,7 @@ If the document has no references section, create it at the end with `createSect
    `## Bibliography` (or `References`, `Works Cited`, etc.) section with all registered citations.
 
 The bibliography stays updated automatically: just add a citation with `zotero_cite` and call
-`zotero_bibliography` again. To review before writing, omit `apply` (dryRun mode returns the diff).
+`zotero_bibliography` again. To review before writing, omit `apply`: the response has `dryRun: true` and the diff.
 
 ### 7. Read a Word document structure
 
@@ -298,7 +298,7 @@ bibliography maintenance). It activates automatically when the user asks to sear
 - CSL styles (CC-BY-SA 3.0 from the [citation-style-language/styles](https://github.com/citation-style-language/styles) project): `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver`.
 - Locales (CC-BY-SA 3.0 from [citation-style-language/locales](https://github.com/citation-style-language/locales)): `es-ES`, `en-US`.
 
-To add styles or locales, place the file in `src/csl/` or `src/locales/` with the correct name.
+To add a style, copy its `.csl` file to `src/csl/` (the file name, without `.csl`, is the style name); to add a locale, copy `locales-<code>.xml` to `src/locales/`. Restart the MCP client to load them. If the requested locale is not available, one of the same language is used (`es-MX` → `es-ES`) and, failing that, `en-US`.
 
 ## Security
 
@@ -307,7 +307,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 - The only write operations are the **references section** of Markdown files and **Zotero fields** in Word files (.docx), and only with explicit `apply: true`.
 - No secrets in the repository; credentials (if any) go through environment variables.
 - Documents are only read and written inside the allowed folders (`ZOTERO_MCP_ALLOWED_DIRS`, the client's roots or the server start folder).
-- Parameter validation, connection timeout (8 s) and file size limit (2 MB).
+- Parameter validation, timeouts (8 s for the local API, 15 s for OpenAlex/Crossref, 20 s for saving) and file size limit (2 MB).
 
 ## Troubleshooting
 
@@ -315,7 +315,7 @@ To add styles or locales, place the file in `src/csl/` or `src/locales/` with th
 |---|---|---|
 | `zotero_status` → `ok: false` | Zotero closed or local API disabled | Open Zotero and enable *"Allow other applications on this computer to communicate with Zotero"* (Edit → Settings → Advanced). No restart required. |
 | `zotero_cite` → "Item not found with key..." | Wrong key or deleted item | Search again with `zotero_search` and copy the exact `key`. |
-| `zotero_bibliography` → "Unsupported style" | Style not included | Use one of: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (or add the `.csl` file to `src/csl/`). |
+| `zotero_bibliography` → "Unsupported style" | Style not included | Use one of: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (or add the `.csl` file to `src/csl/` and restart the client). |
 | "No references section found" | Document has no bibliography heading | Pass `createSection: true` to create it at the end. |
 | "filePath must be a .md file..." | `.docx` or other extension was passed | `zotero_bibliography` only updates Markdown (`.md`/`.markdown`); for Word use `zotero_update_bibliography_docx`. |
 | "Could not write/read ...: the file is open or locked by another application" | The document is open in Word (or locked by another program) | Close it and run the tool again; the original is not modified. |
@@ -336,6 +336,8 @@ npm start                             # start the MCP server via stdio
 node scripts/smoke.mjs                # MCP handshake + list registered tools
 node scripts/e2e.mjs '{"tool":"zotero_status"}' '{"tool":"zotero_search","args":{"query":"x"}}'   # test tools against your Zotero
 ```
+
+Run `e2e.mjs` from Git Bash or PowerShell 7 (`pwsh`): Windows PowerShell 5.1 strips the quotes from the JSON. Calls with `apply: true` are rejected unless you add `--allow-write`, because they write to your library or your documents.
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push to `main` and every pull request: the test suite and the MCP smoke test on Node 18, 20, 22 and 24 (Linux) and Node 22 (Windows), plus `npm audit`, which fails on high or critical vulnerabilities. Tests do not need Zotero: they use mocked responses.
 
