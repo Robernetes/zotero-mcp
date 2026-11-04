@@ -10,8 +10,25 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 
 - Sección «Uso con otros clientes MCP» en los README: Claude Code, Claude Desktop,
   Cursor, VS Code, Windsurf y Gemini CLI.
+- Los estilos y locales disponibles se leen de `src/csl/` y `src/locales/`: basta con
+  copiar un `.csl` o un `locales-<código>.xml` y reiniciar el cliente MCP.
+- `scripts/e2e.mjs` rechaza las llamadas con `apply: true` salvo con `--allow-write`,
+  y explica el error cuando el JSON llega roto (Windows PowerShell 5.1).
+
+### Cambiado
+
+- Un locale que no está disponible usa otro del mismo idioma (`es-MX` → `es-ES`) antes
+  de recurrir a `en-US`; antes las citas salían en inglés.
+- Se quitó el parámetro `dryRun` de `zotero_bibliography`, `zotero_insert_citation_docx`
+  y `zotero_update_bibliography_docx`: no tenía efecto, porque el modo lo decide `apply`.
 
 ### Corregido
+
+- El README en inglés indicaba que `createSection` crea `## Bibliography`; el encabezado
+  es `## Bibliografía`. Los README también decían que bastaba con copiar un estilo a
+  `src/csl/`, lo que no era cierto hasta este cambio.
+- `scripts/smoke.mjs` ya no envía `shutdown`, que no es un método de MCP, y los scripts
+  de instalación ejecutan `npm install` desde la raíz del proyecto.
 
 - Una variable de entorno que llega como `${VAR}` sin expandir (p. ej. al copiar
   `mcp_config.json` a otro cliente) se ignora y se usa el valor por defecto; antes

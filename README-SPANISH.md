@@ -210,10 +210,10 @@ Desde keys explícitas (sin tocar el registro):
 { "tool": "zotero_bibliography", "args": { "keys": ["ABC12345", "DEF67890"], "style": "ieee" } }
 ```
 
-Actualizar la sección de referencias de un documento Markdown (con diff antes de escribir):
+Actualizar la sección de referencias de un documento Markdown (sin `apply` solo devuelve el diff):
 
 ```json
-{ "tool": "zotero_bibliography", "args": { "filePath": "C:/docs/trabajo.md", "dryRun": true } }
+{ "tool": "zotero_bibliography", "args": { "filePath": "C:/docs/trabajo.md" } }
 ```
 
 Escribir el archivo:
@@ -233,7 +233,7 @@ Si el documento no tiene sección de referencias, crearla al final con `createSe
    `## Bibliografía` (o `Referencias`, `References`, etc.) con todas las citas registradas.
 
 La bibliografía se mantiene actualizada sola: basta añadir la cita con `zotero_cite` y volver a
-llamar `zotero_bibliography`. Para revisar antes de escribir, omite `apply` (modo `dryRun` devuelve el diff).
+llamar `zotero_bibliography`. Para revisar antes de escribir, omite `apply`: la respuesta trae `dryRun: true` y el diff.
 
 ### 7. Leer estructura de un documento Word
 
@@ -298,7 +298,7 @@ mantenimiento de la bibliografía). Se activa automáticamente al pedir buscar, 
 - Estilos CSL (licencia CC-BY-SA 3.0 del proyecto [citation-style-language/styles](https://github.com/citation-style-language/styles)): `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver`.
 - Locales (CC-BY-SA 3.0 de [citation-style-language/locales](https://github.com/citation-style-language/locales)): `es-ES`, `en-US`.
 
-Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/` con el nombre correcto.
+Para agregar un estilo, copia su `.csl` a `src/csl/` (el nombre del archivo, sin `.csl`, es el nombre del estilo); para agregar un locale, copia `locales-<código>.xml` a `src/locales/`. Reinicia el cliente MCP para cargarlos. Si el locale pedido no está, se usa uno del mismo idioma (`es-MX` → `es-ES`) y, si no hay, `en-US`.
 
 ## Seguridad
 
@@ -307,7 +307,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 - La única escritura es la **sección de referencias** de archivos Markdown y los **campos Zotero** en archivos Word (.docx), y solo con `apply: true` explícito.
 - Sin secretos en el repositorio; las credenciales (si las hubiera) van por variables de entorno.
 - Los documentos solo se leen y escriben dentro de las carpetas permitidas (`ZOTERO_MCP_ALLOWED_DIRS`, los roots del cliente o la carpeta de arranque del servidor).
-- Validación de parámetros, timeout de conexión (8 s) y límite de tamaño de archivo (2 MB).
+- Validación de parámetros, tiempos de espera (8 s para la API local, 15 s para OpenAlex/Crossref, 20 s para guardar) y límite de tamaño de archivo (2 MB).
 
 ## Solución de problemas
 
@@ -315,7 +315,7 @@ Para agregar estilos o locales, coloca el archivo en `src/csl/` o `src/locales/`
 |---|---|---|
 | `zotero_status` → `ok: false` | Zotero cerrado o API local deshabilitada | Abre Zotero y marca *"Allow other applications on this computer to communicate with Zotero"* (Editar → Configuración → Avanzado). No requiere reiniciar. |
 | `zotero_cite` → "No se encontró un item con key..." | Key mal copiada o item borrado | Vuelve a buscarlo con `zotero_search` y copia la `key` exacta. |
-| `zotero_bibliography` → "Estilo no soportado" | Estilo no incluido | Usa uno de: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (o agrega el `.csl` en `src/csl/`). |
+| `zotero_bibliography` → "Estilo no soportado" | Estilo no incluido | Usa uno de: `apa`, `mla`, `chicago-author-date`, `harvard-cite-them-right`, `ieee`, `vancouver` (o agrega el `.csl` en `src/csl/` y reinicia el cliente). |
 | "No se encontró una sección de referencias" | El documento no tiene encabezado de bibliografía | Pasa `createSection: true` para crearla al final. |
 | "filePath debe ser un archivo .md..." | Se pasó `.docx` u otra extensión | `zotero_bibliography` solo actualiza Markdown (`.md`/`.markdown`); para Word usa `zotero_update_bibliography_docx`. |
 | "No se pudo escribir/leer ...: el archivo está abierto o bloqueado por otra aplicación" | El documento está abierto en Word (u otro programa lo bloquea) | Ciérralo y vuelve a ejecutar la herramienta; el original no se modifica. |
@@ -336,6 +336,8 @@ npm start                             # arranca el servidor MCP por stdio
 node scripts/smoke.mjs                # handshake MCP + lista de herramientas registradas
 node scripts/e2e.mjs '{"tool":"zotero_status"}' '{"tool":"zotero_search","args":{"query":"x"}}'   # probar herramientas contra tu Zotero
 ```
+
+Ejecuta `e2e.mjs` desde Git Bash o PowerShell 7 (`pwsh`): Windows PowerShell 5.1 quita las comillas del JSON. Las llamadas con `apply: true` se rechazan salvo que añadas `--allow-write`, porque escriben en tu biblioteca o en tus documentos.
 
 El CI (GitHub Actions, `.github/workflows/ci.yml`) se ejecuta en cada push a `main` y en cada pull request: los tests y el smoke test del servidor MCP en Node 18, 20, 22 y 24 (Linux) y Node 22 (Windows), más `npm audit`, que falla con vulnerabilidades altas o críticas. Los tests no necesitan Zotero: usan respuestas simuladas.
 

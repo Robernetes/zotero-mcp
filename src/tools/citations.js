@@ -61,7 +61,6 @@ export function registerCitationTools(server, { citationManager, config, workspa
         locale: z.string().optional().describe(`Idioma. Default: ${defaultLocale}.`),
         format: z.enum(FORMATS).optional().describe('Formato de salida (default markdown).'),
         filePath: z.string().optional().describe('Ruta de un archivo .md/.markdown cuya sección de referencias se actualizará, dentro de la carpeta de trabajo (las rutas relativas se resuelven desde ella).'),
-        dryRun: z.boolean().optional().describe('Solo mostrar el diff sin escribir (default true).'),
         apply: z.boolean().optional().describe('Escribir el archivo (requiere filePath; default false).'),
         createSection: z.boolean().optional().describe('Si el documento no tiene sección de referencias, crearla al final (default false).'),
         force: z.boolean().optional().describe('Escribir aunque la nueva bibliografía tenga menos referencias que la sección actual (default false).'),

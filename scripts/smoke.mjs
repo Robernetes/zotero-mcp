@@ -65,10 +65,6 @@ try {
   for (const name of tools) console.log('  -', name);
   console.log('total:', tools.length);
 
-  const idShutdown = nextId++;
-  send('shutdown', {}, idShutdown);
-  await Promise.race([awaitReply(idShutdown).catch(() => null), timeout(3000)]);
-
   const EXPECTED = [
     'zotero_status',
     'zotero_search',
