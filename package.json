@@ -1,7 +1,7 @@
 {
   "name": "zotero-mcp",
   "version": "0.2.0",
-  "description": "Servidor MCP para la biblioteca local de Zotero: búsqueda, citas y bibliografías actualizadas.",
+  "description": "Servidor MCP para la biblioteca local de Zotero: búsqueda, citas CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver), bibliografías actualizadas en Markdown y Word (compatibles con el plugin de Zotero), y búsqueda y guardado de fuentes nuevas con OpenAlex y Crossref. Funciona con cualquier cliente MCP.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -14,9 +14,20 @@
   "keywords": [
     "zotero",
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "citas",
+    "citations",
     "bibliografía",
-    "antigravity"
+    "bibliography",
+    "csl",
+    "citeproc",
+    "docx",
+    "openalex",
+    "crossref",
+    "academic-writing",
+    "antigravity",
+    "claude-code"
   ],
   "license": "MIT",
   "dependencies": {

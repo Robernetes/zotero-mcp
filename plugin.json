@@ -1,5 +1,5 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "zotero-mcp",
-  "description": "Herramientas MCP para buscar en la biblioteca local de Zotero, generar citas y mantener bibliografías actualizadas."
+  "description": "Servidor MCP para la biblioteca local de Zotero: búsqueda, citas CSL (APA, MLA, Chicago, Harvard, IEEE, Vancouver), bibliografías actualizadas en Markdown y Word (compatibles con el plugin de Zotero), y búsqueda y guardado de fuentes nuevas con OpenAlex y Crossref. Funciona con cualquier cliente MCP."
 }
