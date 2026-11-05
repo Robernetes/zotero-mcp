@@ -42,7 +42,6 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
   key (y que para verlo en otra colección hay que arrastrarlo en Zotero) y avisa cuando
   se fuerza un duplicado. `inLibrary` incluye las colecciones del item, también en
   `zotero_find_external`.
-
 - `zotero_insert_citation_docx` pegaba la cita detrás del punto y sin espacio
   ("…del software.(Autor, 2020)"); ahora va antes de la puntuación que cierra la
   frase y separada por un espacio: "…del software (Autor, 2020).". La numeración
