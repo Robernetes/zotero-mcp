@@ -71,6 +71,49 @@ test('search limita limit a 50 y acepta búsqueda vacía', async () => {
   }
 });
 
+test('searchAnyWords busca cada palabra y ordena por cuántas contiene cada item', async () => {
+  const calls = [];
+  const item = (key) => ({ key, data: { title: key } });
+  const restore = mockFetch((url) => {
+    const params = new URL(url).searchParams;
+    calls.push(params);
+    const byWord = {
+      reverse: [item('SOLO0001'), item('AMBOS001')],
+      binary: [item('AMBOS001'), item('OTRO0001')],
+      analysis: [item('AMBOS001')],
+    };
+    return { ok: true, json: async () => byWord[params.get('q')] || [] };
+  });
+  try {
+    const client = new ZoteroClient();
+    // "the" es palabra vacía, "of" es corta y "Binary," se repite sin la coma.
+    const res = await client.searchAnyWords({ query: 'the reverse of binary, analysis Binary', collectionKey: 'COL00001', limit: 2 });
+    assert.deepEqual(res.words, ['reverse', 'binary', 'analysis']);
+    assert.deepEqual(calls.map((p) => p.get('q')), ['reverse', 'binary', 'analysis']);
+    assert.ok(calls.every((p) => p.get('collection') === 'COL00001' && p.get('limit') === '50'));
+    assert.deepEqual(res.items.map((i) => i.key), ['AMBOS001', 'SOLO0001']);
+    assert.deepEqual(res.items[0].matchedWords, ['reverse', 'binary', 'analysis']);
+    assert.deepEqual(res.items[1].matchedWords, ['reverse']);
+  } finally {
+    restore();
+  }
+});
+
+test('searchAnyWords no busca con una sola palabra ni con frases entre comillas', async () => {
+  const restore = mockFetch(() => {
+    throw new Error('no debería consultar Zotero');
+  });
+  try {
+    const client = new ZoteroClient();
+    assert.deepEqual(await client.searchAnyWords({ query: 'malware' }), { words: [], items: [] });
+    assert.deepEqual(await client.searchAnyWords({ query: '"binary analysis" tools' }), { words: [], items: [] });
+    assert.deepEqual(await client.searchAnyWords({ query: 'the of' }), { words: [], items: [] });
+    assert.deepEqual(await client.searchAnyWords({}), { words: [], items: [] });
+  } finally {
+    restore();
+  }
+});
+
 test('error de conexión produce mensaje accionable', async () => {
   const restore = mockFetch(() => {
     throw new TypeError('fetch failed');

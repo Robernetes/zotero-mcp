@@ -29,6 +29,11 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 
 ### Cambiado
 
+- `zotero_search` ya no devuelve 0 resultados cuando ningún item contiene todas las
+  palabras de la búsqueda (la búsqueda rápida de Zotero las exige todas): busca cada
+  palabra por separado y devuelve los items que contienen alguna, empezando por los que
+  contienen más, con `partialMatch: true` y `matchedWords`. Las frases entre comillas se
+  buscan tal cual.
 - Un locale que no está disponible usa otro del mismo idioma (`es-MX` → `es-ES`) antes
   de recurrir a `en-US`; antes las citas salían en inglés.
 - Se quitó el parámetro `dryRun` de `zotero_bibliography`, `zotero_insert_citation_docx`

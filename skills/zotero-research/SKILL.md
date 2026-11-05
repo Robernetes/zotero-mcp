@@ -9,7 +9,7 @@ Este flujo conecta con la biblioteca **local** de Zotero (API local en el puerto
 
 ## 1. Buscar referencias
 
-1. Usa `zotero_search` con palabras clave (`query`).
+1. Usa `zotero_search` con palabras clave (`query`). Si ningún item las contiene todas, devuelve los que contienen alguna con `partialMatch: true` y `matchedWords`: revisa por el título que de verdad traten el tema antes de citarlos.
 2. Si el usuario menciona una carpeta/colección, consúltala con `zotero_list_collections` y filtra con `collectionKey`.
 3. Presenta los resultados con: clave, título, autores y año. No inventes datos: usa solo lo que devuelve la herramienta.
 

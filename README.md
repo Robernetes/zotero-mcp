@@ -129,7 +129,7 @@ Documents are only read and written inside the **allowed folders**: those in `ZO
 | Tool | Description |
 |---|---|
 | `zotero_status` | Check connection to the local API. |
-| `zotero_search` | Search items (`query`, `qmode`, `itemType`, `collectionKey`, `limit`, `sort`, `direction`). |
+| `zotero_search` | Search items (`query`, `qmode`, `itemType`, `collectionKey`, `limit`, `sort`, `direction`). If no item contains every word of the query, returns the ones that contain some of them, with `partialMatch: true` and each item's `matchedWords`. A phrase in quotes is searched as is. |
 | `zotero_get_item` | Full item details by `key`. |
 | `zotero_list_collections` | List collections (`key`, `name`, `parentKey`). |
 | `zotero_cite` | Textual citation (`key`, `style`, `locale`, `locator`, `label`, `prefix`, `suffix`, `register`). |

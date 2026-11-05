@@ -89,6 +89,35 @@ export class ZoteroClient {
     return Array.isArray(data) ? data.map(itemToSummary) : [];
   }
 
+  /**
+   * Búsqueda de respaldo para cuando ningún item contiene todas las palabras
+   * (la búsqueda rápida de Zotero exige todas): busca cada palabra por separado
+   * y ordena los items por cuántas contienen. Mismos filtros que `search`.
+   * @returns {Promise<{words: string[], items: object[]}>} Las palabras buscadas
+   *   y los items con `matchedWords`; `words` vacío si la consulta no se presta
+   *   (una sola palabra, o frases entre comillas).
+   */
+  async searchAnyWords({ query, limit = 10, ...opts } = {}) {
+    const words = queryWords(query);
+    if (words.length === 0) return { words, items: [] };
+    const results = await Promise.all(words.map((word) => this.search({ ...opts, query: word, limit: 50 })));
+    const found = new Map();
+    results.forEach((items, i) => {
+      for (const item of items) {
+        if (!item || !item.key) continue;
+        const entry = found.get(item.key) || { item, matchedWords: [] };
+        if (!entry.matchedWords.includes(words[i])) entry.matchedWords.push(words[i]);
+        found.set(item.key, entry);
+      }
+    });
+    // Orden estable: a igual número de palabras, el orden en que llegaron.
+    const items = [...found.values()]
+      .sort((a, b) => b.matchedWords.length - a.matchedWords.length)
+      .slice(0, clampInt(limit, 1, 50, 10))
+      .map(({ item, matchedWords }) => ({ ...item, matchedWords }));
+    return { words, items };
+  }
+
   /** Devuelve el item completo (JSON de la API) para una key. */
   async getItem(key) {
     const res = await this._request(`/users/0/items/${encodeURIComponent(key)}?format=json`);
@@ -256,6 +285,35 @@ function titleSearchWords(title) {
     .sort((a, b) => ascii(b) - ascii(a) || b.length - a.length)
     .slice(0, 6)
     .join(' ');
+}
+
+// Palabras que casi cualquier título contiene: buscarlas solas no aporta nada.
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'into', 'over', 'its', 'are', 'via', 'using', 'based', 'towards', 'toward',
+  'del', 'los', 'las', 'una', 'uno', 'unos', 'unas', 'para', 'por', 'con', 'sin', 'sobre', 'entre', 'que', 'como', 'desde',
+]);
+
+/**
+ * Palabras de una consulta para buscarlas por separado: sin la puntuación de
+ * los bordes, de 3 o más caracteres, sin palabras vacías ni repetidas, hasta 6.
+ * Vacío si la consulta tiene una sola palabra o frases entre comillas (el
+ * usuario pidió esa frase exacta).
+ */
+function queryWords(query) {
+  const text = String(query ?? '').trim();
+  if (!text || /["“”]/.test(text)) return [];
+  const tokens = text.split(/\s+/);
+  if (tokens.length < 2) return [];
+  const seen = new Set();
+  const words = [];
+  for (const token of tokens) {
+    const word = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    const lower = word.toLowerCase();
+    if (word.length < 3 || STOPWORDS.has(lower) || seen.has(lower)) continue;
+    seen.add(lower);
+    words.push(word);
+  }
+  return words.slice(0, 6);
 }
 
 function extractYear(date) {
