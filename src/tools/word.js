@@ -1,6 +1,6 @@
 // tools/word.js
 // Documentos Word (.docx) con campos del plugin de Zotero: zotero_read_docx,
-// zotero_insert_citation_docx, zotero_update_bibliography_docx.
+// zotero_insert_citation_docx, zotero_remove_citations_docx, zotero_update_bibliography_docx.
 
 import { z } from 'zod';
 import { resolveStyleName, styleNameFromZoteroId, zoteroStyleId } from '../cite.js';
@@ -14,6 +14,10 @@ import {
   locateCitation,
   insertCitationAt,
   upsertBibliography,
+  removeCitations,
+  removeBibliography,
+  describeParagraphs,
+  findBibliographyField,
   listDocumentCitations,
   readDocumentPrefs,
   ensureDocumentPrefs,
@@ -280,6 +284,124 @@ export function registerWordTools(server, { zotero, citationManager, config, wor
           if (backupPath) payload.backupPath = backupPath;
         }
 
+        return ok(payload);
+      });
+    })
+  );
+
+  // ---------------------------------------------------------------------------
+  // zotero_remove_citations_docx
+  // ---------------------------------------------------------------------------
+  server.registerTool(
+    'zotero_remove_citations_docx',
+    {
+      description:
+        'Quita citas Zotero (campos ADDIN ZOTERO_ITEM) de un documento Word sin tocar el resto del documento (texto, formato, estilos): todas, o con keys solo las de esas fuentes ' +
+        '(en una cita agrupada se quitan solo esas fuentes y se conservan las demás). Sin keys también quita la bibliografía de Zotero. ' +
+        'Úsala para deshacer o rehacer citas: nunca regeneres el documento con otras herramientas. Sin apply:true solo muestra cómo quedarían los párrafos.',
+      inputSchema: {
+        filePath: z.string().min(1).describe(PATH_HINT_DOCX),
+        keys: z.array(z.string().min(1)).min(1).optional().describe('Keys de las fuentes cuyas citas se quitan. Sin keys se quitan todas las citas.'),
+        bibliography: z.boolean().optional().describe('Quitar también la bibliografía de Zotero (default: true sin keys, false con keys).'),
+        apply: z.boolean().optional().describe('Escribir el archivo (default false).'),
+      },
+    },
+    async (args) => run(async () => {
+      const abs = await workspace.resolve(args.filePath, DOCX);
+      const keys = args.keys ? [...new Set(args.keys.map((k) => String(k).trim()).filter(Boolean))] : null;
+      if (keys && keys.length === 0) return fail('keys está vacío: indica las keys de las fuentes o no pases keys para quitar todas las citas.');
+
+      return withFileLock(abs, async () => {
+        const ctx = await openDocx(abs);
+        const citations = listDocumentCitations(ctx.doc);
+        const hadBibliography = Boolean(findBibliographyField(ctx.doc));
+        if (citations.length === 0 && !hadBibliography) {
+          return fail('El documento no tiene citas ni bibliografía de Zotero.');
+        }
+        const removeBib = args.bibliography ?? !keys;
+        const warnings = [];
+
+        // En una cita agrupada que conserva otras fuentes, el texto se recalcula con
+        // las citas que quedan en el documento (numeración y desambiguación).
+        const texts = new Map();
+        if (keys) {
+          const wanted = new Set(keys);
+          if (!citations.some((c) => c.items.some((i) => wanted.has(i.key)))) {
+            const cited = [...new Set(citations.flatMap((c) => c.items.map((i) => i.key)).filter(Boolean))];
+            return fail(
+              `Ninguna cita del documento usa las keys ${keys.join(', ')}.` +
+                (cited.length > 0 ? ` El documento cita: ${cited.join(', ')}.` : '')
+            );
+          }
+          const remaining = citations
+            .map((c) => {
+              const items = c.items.filter((i) => !wanted.has(i.key));
+              return { ...c, items, partial: items.length < c.items.length };
+            })
+            .filter((c) => c.items.length > 0);
+          if (remaining.some((c) => c.partial)) {
+            const { style, locale } = await resolveDocxStyle(ctx, {});
+            const resolved = await resolveDocumentCitations(remaining);
+            const usable = (cluster) => cluster.filter((ci) => resolved.itemsById.has(ci.id));
+            remaining.forEach((c, i) => {
+              if (!c.partial) return;
+              const citationItems = usable(resolved.clusters[i]);
+              if (!c.citationID || citationItems.length === 0) {
+                warnings.push('Una cita agrupada conserva su texto anterior; el plugin de Zotero lo corregirá al pulsar Refresh en Word.');
+                return;
+              }
+              const others = (list) => list.map(usable).filter((cl) => cl.length > 0);
+              const { citation } = citationManager.renderCitation({
+                style,
+                locale,
+                items: [...resolved.itemsById.values()],
+                before: others(resolved.clusters.slice(0, i)),
+                citationItems,
+                after: others(resolved.clusters.slice(i + 1)),
+              });
+              texts.set(c.citationID, citation);
+            });
+          }
+        }
+
+        const removed = removeCitations(ctx.doc, { keys, texts });
+        const bibliography = removeBib ? removeBibliography(ctx.doc) : null;
+        const remainingCitations = listDocumentCitations(ctx.doc).length;
+        if (remainingCitations > 0 && removed.removedSources > 0) {
+          warnings.push('Las demás citas no se renumeran ni se reescriben: el plugin de Zotero las actualiza al pulsar Refresh en Word.');
+        }
+        if (!removeBib && hadBibliography) {
+          warnings.push(
+            remainingCitations > 0
+              ? 'La bibliografía todavía incluye las fuentes quitadas: actualízala con zotero_update_bibliography_docx.'
+              : 'El documento ya no tiene citas pero conserva la bibliografía: quítala con bibliography: true.'
+          );
+        }
+
+        const apply = args.apply === true;
+        const payload = {
+          filePath: abs,
+          ...(keys ? { keys } : {}),
+          removedCitations: removed.removedCitations,
+          removedSources: removed.removedSources,
+          updatedCitations: removed.updatedCitations,
+          remainingCitations,
+          bibliographyRemoved: Boolean(bibliography),
+          // Cómo quedan los párrafos de los que se quitaron citas.
+          paragraphs: describeParagraphs(ctx.doc, removed.paragraphs).map((p) => ({
+            index: p.index,
+            text: p.text.length > 400 ? `${p.text.slice(0, 400)}…` : p.text,
+          })),
+          apply,
+          dryRun: !apply,
+        };
+        if (warnings.length > 0) payload.warnings = warnings;
+
+        if (apply) {
+          const { backupPath } = await saveDocx(ctx, abs, { backup });
+          payload.written = true;
+          if (backupPath) payload.backupPath = backupPath;
+        }
         return ok(payload);
       });
     })

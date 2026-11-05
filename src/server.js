@@ -5,7 +5,7 @@
 // conector de Zotero, solo con apply:true. Las herramientas están en src/tools/:
 //   library.js   zotero_status, zotero_search, zotero_get_item, zotero_list_collections
 //   citations.js zotero_cite, zotero_bibliography (Markdown)
-//   word.js      zotero_read_docx, zotero_insert_citation_docx, zotero_update_bibliography_docx
+//   word.js      zotero_read_docx, zotero_insert_citation_docx, zotero_remove_citations_docx, zotero_update_bibliography_docx
 //   external.js  zotero_find_external (OpenAlex / Crossref), zotero_add_item
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';

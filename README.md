@@ -136,6 +136,7 @@ Documents are only read and written inside the **allowed folders**: those in `ZO
 | `zotero_bibliography` | Bibliography from registered citations or explicit `keys`; with `filePath` + `apply: true` updates the references section of a `.md` file. |
 | `zotero_read_docx` | Read paragraphs from a `.docx` (index, text, whether it already has Zotero fields). |
 | `zotero_insert_citation_docx` | Insert an `ADDIN ZOTERO_ITEM CSL_CITATION` field in a `.docx` right after the sentence it supports (`afterText`) or at the end of a paragraph; with `keys`, one grouped citation for several sources. |
+| `zotero_remove_citations_docx` | Remove Zotero citations from a `.docx` (all of them, or only some sources with `keys`) and the bibliography, without touching the rest of the document. |
 | `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx` (one paragraph per reference). |
 | `zotero_find_external` | Search publications **outside** the library in OpenAlex/Crossref (`query` or `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` tells whether each one is already in Zotero. |
 | `zotero_add_item` | Save a publication to the library by `doi` or `openAlexId`, optionally into `collectionKey` with `tags`. Preview without `apply: true`; never saves duplicates unless `allowDuplicate: true`. |
@@ -277,6 +278,14 @@ The citation is inserted as an `ADDIN ZOTERO_ITEM CSL_CITATION` field with the i
 1. `zotero_read_docx` → learn the structure (paragraphs and their indices).
 2. For each statement that needs a source: `zotero_insert_citation_docx` with `afterText` (and `keys` when several sources support it).
 3. `zotero_update_bibliography_docx` → adds/updates the BIBL field at the end.
+
+To redo citations, remove them with `zotero_remove_citations_docx` instead of editing or regenerating the file: text, formatting and styles stay as they were, and the space before each citation is removed too.
+
+```json
+{ "tool": "zotero_remove_citations_docx", "args": { "filePath": "C:/docs/paper.docx", "keys": ["ABC12345"], "apply": true } }
+```
+
+With `keys` only those sources are removed (in a grouped citation, the other sources stay and its text is recalculated); without `keys` every citation and the bibliography are removed. Without `apply` it shows how the paragraphs would look.
 
 ### 10. Search outside your library
 

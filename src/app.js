@@ -24,7 +24,7 @@ export function createServer(ctx = createContext()) {
   connectWorkspaceRoots(server, ctx.workspace);
   registerLibraryTools(server, ctx); // zotero_status, zotero_search, zotero_get_item, zotero_list_collections
   registerCitationTools(server, ctx); // zotero_cite, zotero_bibliography (Markdown)
-  registerWordTools(server, ctx); // zotero_read_docx, zotero_insert_citation_docx, zotero_update_bibliography_docx
+  registerWordTools(server, ctx); // zotero_read_docx, zotero_insert_citation_docx, zotero_remove_citations_docx, zotero_update_bibliography_docx
   registerExternalTools(server, ctx); // zotero_find_external, zotero_add_item
   return server;
 }

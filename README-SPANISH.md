@@ -136,6 +136,7 @@ Los documentos solo se leen y escriben dentro de las **carpetas permitidas**: la
 | `zotero_bibliography` | Bibliografía desde el registro de citas o `keys` explícitas; con `filePath` + `apply: true` actualiza la sección de referencias de un `.md`. |
 | `zotero_read_docx` | Lee los párrafos de un `.docx` (índice, texto, si ya tiene campos Zotero). |
 | `zotero_insert_citation_docx` | Inserta un campo `ADDIN ZOTERO_ITEM CSL_CITATION` en un `.docx` justo después de la frase que respalda (`afterText`) o al final de un párrafo; con `keys`, una sola cita agrupada para varias fuentes. |
+| `zotero_remove_citations_docx` | Quita citas Zotero de un `.docx` (todas, o solo algunas fuentes con `keys`) y la bibliografía, sin tocar el resto del documento. |
 | `zotero_update_bibliography_docx` | Inserta o actualiza el campo `ADDIN ZOTERO_BIBL` en un `.docx` (un párrafo por referencia). |
 | `zotero_find_external` | Busca publicaciones **fuera** de la biblioteca en OpenAlex/Crossref (`query` o `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` indica si cada una ya está en Zotero. |
 | `zotero_add_item` | Guarda una publicación en la biblioteca por `doi` u `openAlexId`, opcionalmente en `collectionKey` y con `tags`. Sin `apply: true` es una vista previa; no guarda duplicados salvo `allowDuplicate: true`. |
@@ -277,6 +278,14 @@ La cita se inserta como campo `ADDIN ZOTERO_ITEM CSL_CITATION` con el CSL JSON d
 1. `zotero_read_docx` → conoce la estructura (párrafos y sus índices).
 2. Para cada afirmación que necesite fuente: `zotero_insert_citation_docx` con `afterText` (y `keys` si la respaldan varias fuentes).
 3. `zotero_update_bibliography_docx` → añade/actualiza el campo BIBL al final.
+
+Para rehacer citas, quítalas con `zotero_remove_citations_docx` en lugar de editar o regenerar el archivo: el texto, el formato y los estilos quedan como estaban, y también se quita el espacio delante de cada cita.
+
+```json
+{ "tool": "zotero_remove_citations_docx", "args": { "filePath": "C:/docs/articulo.docx", "keys": ["ABC12345"], "apply": true } }
+```
+
+Con `keys` se quitan solo esas fuentes (en una cita agrupada se conservan las demás y se recalcula su texto); sin `keys` se quitan todas las citas y la bibliografía. Sin `apply` muestra cómo quedarían los párrafos.
 
 ### 10. Buscar fuera de tu biblioteca
 

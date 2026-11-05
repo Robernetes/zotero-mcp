@@ -337,22 +337,14 @@ export function listDocumentCitations(doc) {
     const items = [];
     for (const item of (data && data.citationItems) || []) {
       if (!item) continue;
-      const uris = Array.isArray(item.uris) ? item.uris : item.uri ? [].concat(item.uri) : [];
-      let key = null;
-      for (const uri of uris) {
-        const m = String(uri).match(/\/items\/([A-Za-z0-9]+)\/?$/);
-        if (m) {
-          key = m[1];
-          break;
-        }
-      }
+      const key = citationItemKey(item);
       const itemData = item.itemData && typeof item.itemData === 'object' ? item.itemData : null;
       if (!key && !itemData) continue;
       const entry = { key, itemData };
       for (const f of ['locator', 'label', 'prefix', 'suffix']) if (item[f] != null) entry[f] = item[f];
       items.push(entry);
     }
-    if (items.length > 0) out.push({ startChild, items });
+    if (items.length > 0) out.push({ startChild, citationID: (data && data.citationID) || null, items });
   }
   return out;
 }
@@ -398,7 +390,8 @@ export function buildCitationRuns({
 }) {
   const sources = items || [{ itemData, uris, locator, label, prefix, suffix }];
   const citationItems = sources.map((s) => {
-    const citationItem = { id: s.itemData.id, uris: s.uris, itemData: s.itemData };
+    const citationItem = { id: s.id ?? s.itemData.id, uris: s.uris };
+    if (s.itemData) citationItem.itemData = s.itemData;
     if (s.locator) citationItem.locator = String(s.locator);
     if (s.label) citationItem.label = s.label;
     if (s.prefix) citationItem.prefix = s.prefix;
@@ -621,6 +614,132 @@ export function upsertBibliography(doc, entries, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Quitar citas y bibliografía
+// ---------------------------------------------------------------------------
+
+/**
+ * Quita citas Zotero (campos ADDIN ZOTERO_ITEM) del documento sin tocar el resto:
+ * todas o, con `keys`, solo esas fuentes. Una cita agrupada que conserva otras
+ * fuentes se reescribe con ellas y con el texto de `texts` (por citationID).
+ * También quita el espacio de separación que queda delante de la cita.
+ * @param {object} doc
+ * @param {{keys?: string[], texts?: Map<string, string>}} [opts]
+ * @returns {{removedCitations: number, removedSources: number, updatedCitations: number, paragraphs: object[]}}
+ *   paragraphs: nodos w:p modificados (para describeParagraphs).
+ */
+export function removeCitations(doc, { keys, texts = new Map() } = {}) {
+  const wanted = keys ? new Set(keys) : null;
+  const result = { removedCitations: 0, removedSources: 0, updatedCitations: 0, paragraphs: [] };
+  forEachParagraph(getBody(doc), (pNode) => {
+    const kids = childrenOf(pNode);
+    const pieces = paragraphPieces(pNode).filter((p) => p.zoteroCitation);
+    let touched = false;
+    // De atrás hacia delante, para que los índices de las citas anteriores sigan valiendo.
+    for (const piece of pieces.reverse()) {
+      const jsonStart = piece.instr.indexOf('{');
+      let data = null;
+      try {
+        data = JSON.parse(piece.instr.slice(jsonStart));
+      } catch {
+        data = null;
+      }
+      const items = (data && data.citationItems) || [];
+      const keep = wanted ? items.filter((it) => !wanted.has(citationItemKey(it))) : [];
+      if (wanted && (!data || keep.length === items.length)) continue;
+      touched = true;
+      result.removedSources += items.length - keep.length;
+      if (keep.length > 0) {
+        const text = texts.get(data.citationID) ?? piece.text;
+        const runs = buildCitationRuns({
+          citationID: data.citationID,
+          noteIndex: (data.properties && data.properties.noteIndex) || 0,
+          formattedCitation: text,
+          plainCitation: text,
+          items: keep.map((it) => ({ ...it, uris: it.uris || [].concat(it.uri || []) })),
+        });
+        kids.splice(piece.first, piece.last - piece.first + 1, ...runs);
+        result.updatedCitations++;
+      } else {
+        kids.splice(piece.first, piece.last - piece.first + 1);
+        trimSeparatorSpace(pNode, piece.start);
+        result.removedCitations++;
+      }
+    }
+    if (touched) result.paragraphs.push(pNode);
+  });
+  return result;
+}
+
+/**
+ * Quita el campo de bibliografía Zotero (ADDIN ZOTERO_BIBL) y los párrafos que abarca.
+ * @returns {{paragraphIndex: number, paragraphs: number}|null} null si no hay bibliografía.
+ */
+export function removeBibliography(doc) {
+  const existing = findBibliographyField(doc);
+  if (!existing) return null;
+  if (existing.paragraphIndex < 0 || existing.endParagraphIndex < 0) {
+    throw new Error(
+      'La bibliografía de Zotero del documento está dentro de una tabla u otro contenedor; quítala desde Word con el plugin de Zotero.'
+    );
+  }
+  getBody(doc).splice(existing.startChild, existing.endChild - existing.startChild + 1);
+  return { paragraphIndex: existing.paragraphIndex, paragraphs: existing.endParagraphIndex - existing.paragraphIndex + 1 };
+}
+
+/** Índice y texto (como readParagraphs) de los párrafos de primer nivel indicados. */
+export function describeParagraphs(doc, nodes) {
+  const wanted = new Set(nodes);
+  const top = topLevelParagraphs(doc);
+  return readParagraphs({ doc })
+    .filter((p) => wanted.has(top[p.index].node))
+    .map(({ index, text }) => ({ index, text }));
+}
+
+/** Key de Zotero de un citationItem, sacada de su URI (…/items/KEY), o null. */
+function citationItemKey(item) {
+  const uris = Array.isArray(item.uris) ? item.uris : item.uri ? [].concat(item.uri) : [];
+  for (const uri of uris) {
+    const m = String(uri).match(/\/items\/([A-Za-z0-9]+)\/?$/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Recorre los w:p del cuerpo en orden de documento (también los de tablas). */
+function forEachParagraph(nodes, fn) {
+  for (const node of nodes) {
+    if (tagOf(node) === 'w:p') fn(node);
+    else forEachParagraph(childrenOf(node), fn);
+  }
+}
+
+/**
+ * Tras quitar una cita en la posición `pos` del texto del párrafo, quita un espacio
+ * que haya quedado sobrando delante ("software (A)." → "software ." → "software.").
+ */
+function trimSeparatorSpace(pNode, pos) {
+  const pieces = paragraphPieces(pNode);
+  const text = pieces.map((p) => p.text).join('');
+  if (!(pos > 0 && /\s/.test(text[pos - 1]) && (pos >= text.length || /[\s.,;:!?)\]]/.test(text[pos])))) return;
+  const prev = pieces.find((p) => p.start < pos && pos <= p.end);
+  if (!prev || !prev.splittable) return;
+  const kids = childrenOf(pNode);
+  const run = kids[prev.first];
+  const ts = childrenOf(run).filter((c) => tagOf(c) === 'w:t');
+  const last = ts[ts.length - 1];
+  const s = textOf(last);
+  if (!/\s$/.test(s)) return;
+  const trimmed = s.slice(0, -1);
+  if (trimmed) {
+    Object.assign(last, textEl(trimmed));
+  } else {
+    const runKids = childrenOf(run);
+    runKids.splice(runKids.indexOf(last), 1);
+    if (!runKids.some((c) => tagOf(c) !== 'w:rPr')) kids.splice(prev.first, 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers de nodos (formato preserveOrder)
 // ---------------------------------------------------------------------------
 
@@ -738,7 +857,6 @@ function paragraphPieces(pNode) {
   });
   for (const p of pieces) {
     p.zoteroCitation = Boolean(p.instr && /^\s*ADDIN ZOTERO_ITEM/.test(p.instr));
-    delete p.instr;
   }
   return pieces;
 }
