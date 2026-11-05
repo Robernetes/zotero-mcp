@@ -34,6 +34,21 @@ export function registerExternalTools(server, { zotero, zoteroConnector, externa
     return { id: matches[0].id, name: path.join(' / ') };
   }
 
+  /** Colecciones de la biblioteca (vacío si no se pueden leer: solo se usan para informar). */
+  async function collectionsOrEmpty() {
+    try {
+      return await zotero.listCollections();
+    } catch {
+      return [];
+    }
+  }
+
+  /** Un item que ya está en la biblioteca, con los nombres de sus colecciones. */
+  function describeExisting(existing, collections) {
+    const names = (existing.collections || []).map((k) => collectionPath(k, collections).join(' / ')).filter(Boolean);
+    return { key: existing.key, title: existing.title, collections: names };
+  }
+
   // ---------------------------------------------------------------------------
   // zotero_find_external
   // ---------------------------------------------------------------------------
@@ -83,9 +98,10 @@ export function registerExternalTools(server, { zotero, zoteroConnector, externa
       if (args.checkLibrary !== false && results.length > 0) {
         try {
           const existing = await Promise.all(results.map((r) => zotero.findExisting({ doi: r.doi, title: r.title })));
+          const collections = existing.some(Boolean) ? await collectionsOrEmpty() : [];
           results = results.map((r, i) => ({
             ...r,
-            inLibrary: existing[i] ? { key: existing[i].key, title: existing[i].title } : null,
+            inLibrary: existing[i] ? describeExisting(existing[i], collections) : null,
           }));
         } catch (err) {
           warnings = [...warnings, `No se pudo comprobar la biblioteca local: ${err.message}`];
@@ -107,13 +123,14 @@ export function registerExternalTools(server, { zotero, zoteroConnector, externa
       description:
         'Guarda en la biblioteca de Zotero una publicación encontrada con zotero_find_external, por DOI u openAlexId. ' +
         'Sin apply:true solo muestra qué se guardaría y dónde. Requiere Zotero abierto. ' +
-        'Confirma con el usuario antes de guardar. No guarda duplicados salvo allowDuplicate:true.',
+        'Confirma con el usuario antes de guardar. Si la publicación ya está en la biblioteca no la guarda: usa la key de inLibrary para citarla ' +
+          '(zotero-mcp no puede añadir un item existente a otra colección; el usuario puede arrastrarlo en Zotero).',
       inputSchema: {
         doi: z.string().optional().describe('DOI de la publicación (10.xxxx/... o https://doi.org/...).'),
         openAlexId: z.string().optional().describe('Id de OpenAlex (W123...) para publicaciones sin DOI (campo openAlexId de zotero_find_external).'),
         collectionKey: z.string().optional().describe('Colección destino (key de zotero_list_collections). Si se omite: la colección seleccionada en Zotero.'),
         tags: z.array(z.string().min(1)).max(20).optional().describe('Etiquetas para el item.'),
-        allowDuplicate: z.boolean().optional().describe('Guardar aunque ya exista en la biblioteca (default false).'),
+        allowDuplicate: z.boolean().optional().describe('Crear un segundo item aunque ya exista en la biblioteca. Solo si el usuario pide expresamente un duplicado; nunca para añadirlo a otra colección (default false).'),
         apply: z.boolean().optional().describe('Guardar de verdad (default false: solo vista previa).'),
       },
     },
@@ -132,18 +149,33 @@ export function registerExternalTools(server, { zotero, zoteroConnector, externa
         target: target.name,
         collectionKey: args.collectionKey ?? null,
         tags,
-        inLibrary: existing ? { key: existing.key, title: existing.title } : null,
+        inLibrary: existing ? describeExisting(existing, await collectionsOrEmpty()) : null,
       };
 
       if (existing && !args.allowDuplicate) {
+        const inTarget = args.collectionKey ? (existing.collections || []).includes(args.collectionKey) : null;
+        const names = base.inLibrary.collections;
+        const where = names.length > 0 ? ` (colecciones: ${names.map((n) => `«${n}»`).join(', ')})` : ' (sin colección)';
+        const message = inTarget
+          ? `Ya está en la biblioteca y en «${target.name}» con la key ${existing.key}: cítalo con esa key.`
+          : `Ya está en la biblioteca con la key ${existing.key}${where}: cítalo con esa key, no hace falta guardarlo. ` +
+            (args.collectionKey
+              ? `zotero-mcp no puede añadir un item existente a otra colección: si el usuario quiere verlo también en «${target.name}», que lo arrastre a esa colección en Zotero. `
+              : '') +
+            'No uses allowDuplicate: crearía un segundo item igual en la biblioteca.';
+        return ok({ ...base, saved: false, ...(inTarget === null ? {} : { inTargetCollection: inTarget }), message });
+      }
+      const duplicateWarning = existing
+        ? `Crea un duplicado de ${existing.key} en la biblioteca (allowDuplicate). Hazlo solo si el usuario lo pidió expresamente.`
+        : null;
+      if (!args.apply) {
         return ok({
           ...base,
           saved: false,
-          message: `Ya está en la biblioteca con la key ${existing.key}; no se guarda de nuevo (usa allowDuplicate:true para forzarlo).`,
+          dryRun: true,
+          message: 'Vista previa: repite con apply:true para guardar.',
+          ...(duplicateWarning ? { warnings: [duplicateWarning] } : {}),
         });
-      }
-      if (!args.apply) {
-        return ok({ ...base, saved: false, dryRun: true, message: 'Vista previa: repite con apply:true para guardar.' });
       }
 
       const sessionID = `zotero-mcp-${randomId(10)}`;
@@ -157,7 +189,13 @@ export function registerExternalTools(server, { zotero, zoteroConnector, externa
         const found = await zotero.findExisting({ doi: csl.DOI, title: csl.title });
         key = found ? found.key : null;
       }
-      return ok({ ...base, saved: true, key, message: `Guardado en "${target.name}"${key ? ` con la key ${key}` : ''}.` });
+      return ok({
+        ...base,
+        saved: true,
+        key,
+        message: `Guardado en "${target.name}"${key ? ` con la key ${key}` : ''}.`,
+        ...(existing ? { warnings: [`Se creó un duplicado de ${existing.key}: puedes combinarlos en Zotero (Elementos duplicados).`] } : {}),
+      });
     })
   );
 }

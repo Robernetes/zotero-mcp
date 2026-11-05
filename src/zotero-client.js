@@ -122,7 +122,8 @@ export class ZoteroClient {
    * Busca en la biblioteca un item que ya corresponda a una publicación:
    * primero por DOI (campo DOI o línea "DOI:" de Extra) y, si no hay DOI o no
    * coincide, por título exacto (sin distinguir mayúsculas ni puntuación).
-   * @returns {Promise<object|null>} Resumen del item (como search) o null.
+   * @returns {Promise<object|null>} Resumen del item (como search, más `collections`:
+   *   keys de sus colecciones) o null.
    */
   async findExisting({ doi, title } = {}) {
     const cleanDoi = normalizeDoi(doi);
@@ -130,14 +131,14 @@ export class ZoteroClient {
       // Entre comillas: sin ellas Zotero busca cada parte del DOI por separado.
       const items = await this._topSearch(`"${cleanDoi}"`, 'everything');
       const match = items.find((i) => itemDois(i).includes(cleanDoi));
-      if (match) return itemToSummary(match);
+      if (match) return existingSummary(match);
     }
     const wanted = normalizeTitle(title);
     const words = titleSearchWords(title);
     if (wanted && words) {
       const items = await this._topSearch(words, 'titleCreatorYear');
       const match = items.find((i) => normalizeTitle(i.data && i.data.title) === wanted);
-      if (match) return itemToSummary(match);
+      if (match) return existingSummary(match);
     }
     return null;
   }
@@ -268,6 +269,12 @@ function formatCreator(c) {
   if (c.name) return String(c.name);
   const parts = [c.firstName, c.lastName].filter((p) => p && String(p).trim());
   return parts.length > 0 ? parts.join(' ') : '(sin nombre)';
+}
+
+/** Resumen de un item existente con las keys de sus colecciones. */
+function existingSummary(item) {
+  const d = item.data && typeof item.data === 'object' ? item.data : item;
+  return { ...itemToSummary(item), collections: Array.isArray(d.collections) ? d.collections : [] };
 }
 
 function itemToSummary(item) {
