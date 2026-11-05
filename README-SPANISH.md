@@ -135,7 +135,7 @@ Los documentos solo se leen y escriben dentro de las **carpetas permitidas**: la
 | `zotero_cite` | Cita textual (`key`, `style`, `locale`, `locator`, `label`, `prefix`, `suffix`, `register`). |
 | `zotero_bibliography` | Bibliografía desde el registro de citas o `keys` explícitas; con `filePath` + `apply: true` actualiza la sección de referencias de un `.md`. |
 | `zotero_read_docx` | Lee los párrafos de un `.docx` (índice, texto, si ya tiene campos Zotero). |
-| `zotero_insert_citation_docx` | Inserta un campo `ADDIN ZOTERO_ITEM CSL_CITATION` al final de un párrafo en un `.docx`. |
+| `zotero_insert_citation_docx` | Inserta un campo `ADDIN ZOTERO_ITEM CSL_CITATION` en un `.docx` justo después de la frase que respalda (`afterText`) o al final de un párrafo; con `keys`, una sola cita agrupada para varias fuentes. |
 | `zotero_update_bibliography_docx` | Inserta o actualiza el campo `ADDIN ZOTERO_BIBL` en un `.docx` (un párrafo por referencia). |
 | `zotero_find_external` | Busca publicaciones **fuera** de la biblioteca en OpenAlex/Crossref (`query` o `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` indica si cada una ya está en Zotero. |
 | `zotero_add_item` | Guarda una publicación en la biblioteca por `doi` u `openAlexId`, opcionalmente en `collectionKey` y con `tags`. Sin `apply: true` es una vista previa; no guarda duplicados salvo `allowDuplicate: true`. |
@@ -245,7 +245,15 @@ llamar `zotero_bibliography`. Para revisar antes de escribir, omite `apply`: la 
 ### 8. Insertar cita en Word (campo dinámico Zotero)
 
 ```json
-{ "tool": "zotero_insert_citation_docx", "args": { "filePath": "C:/docs/articulo.docx", "key": "ABC12345", "paragraphIndex": 0, "style": "apa", "apply": true } }
+{ "tool": "zotero_insert_citation_docx", "args": { "filePath": "C:/docs/articulo.docx", "key": "ABC12345", "afterText": "el proceso de analizar un sistema objeto", "style": "apa", "apply": true } }
+```
+
+`afterText` es un fragmento exacto del texto que devuelve `zotero_read_docx` (se ignoran los espacios repetidos, las comillas tipográficas y los guiones); debe aparecer una sola vez, y `paragraphIndex` acota la búsqueda. Sin `afterText` la cita va al final de `paragraphIndex`. En ambos casos se coloca antes de la puntuación que cierra la frase y separada por un espacio, como en la redacción académica: `…un sistema objeto (Chikofsky & Cross, 1990).` La respuesta incluye `preview` con el texto alrededor, para revisarlo antes de escribir con `apply: true`.
+
+Varias fuentes que respaldan la misma afirmación, en una sola cita agrupada `(Costin et al., 2016; Pang et al., 2021)`:
+
+```json
+{ "tool": "zotero_insert_citation_docx", "args": { "filePath": "C:/docs/articulo.docx", "keys": ["ABC12345", "DEF67890"], "afterText": "binarios y firmware embebido", "apply": true } }
 ```
 
 Con localizador:
@@ -267,7 +275,7 @@ La cita se inserta como campo `ADDIN ZOTERO_ITEM CSL_CITATION` con el CSL JSON d
 ### Flujo típico en Word
 
 1. `zotero_read_docx` → conoce la estructura (párrafos y sus índices).
-2. Para cada cita: `zotero_insert_citation_docx` en el párrafo correcto.
+2. Para cada afirmación que necesite fuente: `zotero_insert_citation_docx` con `afterText` (y `keys` si la respaldan varias fuentes).
 3. `zotero_update_bibliography_docx` → añade/actualiza el campo BIBL al final.
 
 ### 10. Buscar fuera de tu biblioteca

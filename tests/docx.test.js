@@ -17,7 +17,8 @@ import {
   listDocumentCitations,
   paragraphChildIndex,
   buildCitationRuns,
-  insertCitationAtParagraph,
+  locateCitation,
+  insertCitationAt,
   findBibliographyField,
   upsertBibliography,
   buildBibliographyParagraphs,
@@ -147,7 +148,7 @@ test('saveDocx escribe un .docx que vuelve a abrirse con la cita al final del p�
       uris: ['http://zotero.org/users/0/items/ABC12345'],
       itemData: { id: 1, type: 'book', title: 'A & B' },
     });
-    insertCitationAtParagraph(ctx.doc, 0, runs);
+    insertCitationAt(ctx.doc, locateCitation(ctx.doc, { paragraphIndex: 0 }), runs);
     await saveDocx(ctx, file);
 
     const reopened = await openDocx(file);
@@ -163,7 +164,7 @@ test('saveDocx escribe un .docx que vuelve a abrirse con la cita al final del p�
     assert.ok(!xml.includes('&amp;amp;') && !xml.includes('&amp;#'));
 
     const paragraphs = readParagraphs(reopened);
-    assert.equal(paragraphs[0].text, 'Antes enlace(Smith & Jones, 2020)');
+    assert.equal(paragraphs[0].text, 'Antes enlace (Smith & Jones, 2020)');
     assert.equal(paragraphs[0].hasZoteroField, true);
     assert.equal(countExistingCitations(reopened), 1);
     assert.deepEqual(listCitedItems(reopened.doc), [
@@ -205,9 +206,9 @@ test('buildCitationRuns produce runs con el JSON correcto', () => {
   assert.equal(json.schema, 'https://github.com/citation-style-language/schema/raw/master/csl-citation.json');
 });
 
-test('insertCitationAtParagraph lanza si el índice no existe', async () => {
+test('insertCitationAt lanza si el índice no existe', async () => {
   const ctx = await load(BASIC_DOC);
-  assert.throws(() => insertCitationAtParagraph(ctx.doc, 99, []), /No existe el párrafo 99/);
+  assert.throws(() => insertCitationAt(ctx.doc, { paragraphIndex: 99, pos: 0 }, []), /No existe el párrafo 99/);
 });
 
 test('findBibliographyField encuentra o no el campo BIBL', async () => {
@@ -384,4 +385,104 @@ test('listDocumentCitations agrupa por campo con posición y localizador', async
   assert.equal(paragraphChildIndex(ctx.doc, 1), 2);
   assert.equal(paragraphChildIndex(ctx.doc, 2), 3);
   assert.equal(paragraphChildIndex(ctx.doc, 9), -1);
+});
+
+// --- Posición de la cita: afterText, puntuación y espacios -------------------
+
+/** Inserta una cita con el texto `visible` y devuelve el texto de los párrafos. */
+function citeAt(ctx, opts, visible = '(A, 1990)') {
+  const loc = locateCitation(ctx.doc, opts);
+  const runs = buildCitationRuns({
+    citationID: 'X',
+    noteIndex: 0,
+    formattedCitation: visible,
+    plainCitation: visible,
+    uris: ['http://zotero.org/users/0/items/KEY00001'],
+    itemData: { id: 1, type: 'book', title: 'T' },
+  });
+  insertCitationAt(ctx.doc, loc, runs);
+  return { loc, texts: readParagraphs(ctx).map((p) => p.text) };
+}
+
+const TWO_SENTENCES = docXml(
+  '<w:p><w:r><w:t>Intro.</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">La ingeniería inversa es clave. Se usa en firmware y binarios.</w:t></w:r></w:p>' +
+    SECT
+);
+
+test('la cita va tras afterText, antes del punto y con espacio', async () => {
+  const ctx = await load(TWO_SENTENCES);
+  const { loc, texts } = citeAt(ctx, { afterText: 'La ingeniería inversa es clave.' });
+  assert.equal(loc.paragraphIndex, 1, 'sin paragraphIndex busca en todo el documento');
+  assert.equal(loc.beforePunctuation, true);
+  assert.equal(texts[1], 'La ingeniería inversa es clave (A, 1990). Se usa en firmware y binarios.');
+  // El run partido y el espacio conservan el formato (negrita).
+  const xml = serializeDocument(ctx.doc);
+  assert.equal((xml.match(/<w:b\/>/g) || []).length, 3, 'izquierda, espacio y derecha en negrita');
+});
+
+test('sin afterText la cita va al final del párrafo, antes del punto final', async () => {
+  const ctx = await load(TWO_SENTENCES);
+  const { texts } = citeAt(ctx, { paragraphIndex: 1 });
+  assert.equal(texts[1], 'La ingeniería inversa es clave. Se usa en firmware y binarios (A, 1990).');
+  const { texts: again } = citeAt(ctx, { paragraphIndex: 1 }, '(B, 2021)');
+  assert.equal(again[1], 'La ingeniería inversa es clave. Se usa en firmware y binarios (A, 1990) (B, 2021).');
+});
+
+test('afterText a mitad de frase separa la cita por los dos lados', async () => {
+  const ctx = await load(docXml('<w:p><w:r><w:t>Según Chikofsky la idea cambió.</w:t></w:r></w:p>' + SECT));
+  const { texts } = citeAt(ctx, { afterText: 'Según Chikofsky' });
+  assert.equal(texts[0], 'Según Chikofsky (A, 1990) la idea cambió.');
+});
+
+test('afterText tolera espacios repetidos, comillas tipográficas y guiones', async () => {
+  const ctx = await load(docXml('<w:p><w:r><w:t xml:space="preserve">El término “ingeniería  inversa” —dice— es amplio.</w:t></w:r></w:p>' + SECT));
+  const { texts } = citeAt(ctx, { afterText: 'El término "ingeniería inversa" -dice-' });
+  assert.equal(texts[0], 'El término “ingeniería  inversa” —dice— (A, 1990) es amplio.');
+});
+
+test('afterText que no está o se repite da un error claro', async () => {
+  const ctx = await load(docXml('<w:p><w:r><w:t>Uno. Uno.</w:t></w:r></w:p><w:p><w:r><w:t>Dos.</w:t></w:r></w:p>' + SECT));
+  assert.throws(() => locateCitation(ctx.doc, { afterText: 'Tres' }), /No se encontró el texto "Tres" en el documento/);
+  assert.throws(() => locateCitation(ctx.doc, { afterText: 'Dos', paragraphIndex: 0 }), /en el párrafo 0/);
+  assert.throws(() => locateCitation(ctx.doc, { afterText: 'Uno' }), /aparece 2 veces/);
+  assert.throws(() => locateCitation(ctx.doc, { paragraphIndex: 9 }), /No existe el párrafo 9/);
+  assert.throws(() => locateCitation(ctx.doc, {}), /Indica paragraphIndex o afterText/);
+});
+
+test('no parte hipervínculos ni campos: la cita va detrás y cuenta las citas previas', async () => {
+  const ctx = await load(
+    docXml(
+      '<w:p><w:r><w:t xml:space="preserve">Ver </w:t></w:r>' +
+        '<w:hyperlink r:id="rId9"><w:r><w:t>el sitio web</w:t></w:r></w:hyperlink>' +
+        '<w:r><w:t xml:space="preserve"> y la fuente </w:t></w:r>' +
+        citationField('{"citationItems":[{"id":1,"uris":["http://zotero.org/users/0/items/OLD00001"]}]}') +
+        '<w:r><w:t>.</w:t></w:r></w:p>' +
+        SECT
+    )
+  );
+  const first = citeAt(ctx, { afterText: 'Ver el sitio' });
+  assert.equal(first.loc.citationsBefore, 0);
+  assert.equal(first.texts[0], 'Ver el sitio web (A, 1990) y la fuente (cita).');
+  const second = citeAt(ctx, { paragraphIndex: 0 }, '(B, 2021)');
+  assert.equal(second.loc.citationsBefore, 2, 'la cita existente y la recién insertada quedan antes');
+  assert.equal(second.texts[0], 'Ver el sitio web (A, 1990) y la fuente (cita) (B, 2021).');
+});
+
+test('buildCitationRuns agrupa varias fuentes en una sola cita', () => {
+  const runs = buildCitationRuns({
+    citationID: 'G',
+    noteIndex: 0,
+    formattedCitation: '(A, 1990; B, 2021)',
+    items: [
+      { itemData: { id: 1, type: 'book' }, uris: ['http://zotero.org/users/0/items/AAA'], prefix: 'véase' },
+      { itemData: { id: 2, type: 'book' }, uris: ['http://zotero.org/users/0/items/BBB'] },
+    ],
+  });
+  const xml = serializeDocument([{ 'w:document': [{ 'w:body': [{ 'w:p': runs }] }] }]);
+  const instr = xml.match(/<w:instrText xml:space="preserve">([^<]*)<\/w:instrText>/)[1];
+  const json = JSON.parse(instr.replace(' ADDIN ZOTERO_ITEM CSL_CITATION ', ''));
+  assert.deepEqual(json.citationItems.map((c) => c.id), [1, 2]);
+  assert.equal(json.citationItems[0].prefix, 'véase');
+  assert.equal(json.citationItems[1].uris[0], 'http://zotero.org/users/0/items/BBB');
 });

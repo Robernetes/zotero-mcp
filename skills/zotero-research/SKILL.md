@@ -46,6 +46,18 @@ Usa `zotero_get_item` con la `key` cuando necesites el detalle completo de un it
    - **Word (.docx):** usa `zotero_insert_citation_docx` (ver sección 5).
 4. Usa **siempre el mismo** `style` y `locale` para todo el documento; cambiar de estilo a mitad de documento reinicia la numeración.
 
+### Cómo citar bien
+
+Estas reglas valen para Markdown y para Word:
+
+1. **Cita la afirmación, no el párrafo.** La cita va justo después de la frase o idea que la fuente respalda, no amontonada al final del párrafo. Si un párrafo tiene varias ideas con fuentes distintas, cada una lleva su cita.
+2. **Agrupa las fuentes de una misma idea en una sola cita**: "(Chikofsky & Cross, 1990; Pang et al., 2021)", nunca "(Chikofsky & Cross, 1990)(Pang et al., 2021)". En Word, usa `keys` con todas sus keys.
+3. **La cita va antes del punto** que cierra la frase y separada por un espacio: "…del software (Autor, 2020)." (en Word se hace solo).
+4. **Cada fuente debe sostener lo que dice el texto.** Antes de citar, comprueba con el título y el resumen (`includeAbstract: true` en `zotero_find_external`, o `zotero_get_item`) qué afirmación concreta respalda. Si ninguna frase del texto corresponde a una fuente, no la cites: díselo al usuario.
+5. **Sin relleno.** Normalmente bastan 1-3 fuentes por afirmación. No repitas la misma fuente en frases seguidas del mismo párrafo.
+6. **Paráfrasis y citas textuales.** Para una cita textual o una idea de una página concreta, añade `locator` (p. ej. `"15"`) y `label: "page"`.
+7. **Revisa antes de escribir.** Muestra al usuario dónde irá cada cita (en Word, el campo `preview` de la vista previa) antes de escribir con `apply: true`, salvo que ya haya pedido escribir sin revisar.
+
 ## 4. Mantener la bibliografía actualizada en Markdown
 
 La bibliografía se actualiza sola al añadir citas:
@@ -65,21 +77,24 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 ### Leer la estructura
 
 1. `zotero_read_docx { "filePath": "C:/docs/articulo.docx" }` → obtén la lista de párrafos con su índice y texto.
-2. Identifica en qué párrafo debe ir cada cita. Edge: las citas ya insertadas tienen `hasZoteroField: true`.
+2. Identifica la frase exacta que respalda cada fuente (ver «Cómo citar bien»). Las citas ya insertadas tienen `hasZoteroField: true`.
 
 ### Insertar citas
 
 1. `zotero_insert_citation_docx` con:
-   - `filePath`, `key`, `paragraphIndex` (del paso anterior),
-   - `locator`, `label`, `prefix`, `suffix` si hacen falta,
+   - `filePath`,
+   - `key` (una fuente) o `keys` (varias fuentes que respaldan la misma idea: una sola cita agrupada),
+   - `afterText`: un fragmento **exacto** del texto de `zotero_read_docx` tras el que va la cita, normalmente el final de la frase que respalda (puedes incluir o no el punto: la cita se coloca antes). Debe aparecer una sola vez; si no, alarga el fragmento o acota con `paragraphIndex`,
+   - `paragraphIndex` solo para acotar la búsqueda, o sin `afterText` para citar al final del párrafo,
+   - `locator`, `label` (solo con una fuente), y `prefix`/`suffix` para texto dentro de la cita (p. ej. `prefix: "véase"`). **No uses `prefix` ni `suffix` para añadir espacios**: se ponen solos,
    - `style`/`locale` solo si el documento aún no tiene estilo: si ya está configurado en Zotero (preferencias del documento), se usan los suyos por defecto,
    - `apply: true` para escribir el archivo (sin `apply` solo hace dryRun).
-2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` al final del párrafo indicado.
+2. La cita se inserta como campo dinámico `ADDIN ZOTERO_ITEM` en ese lugar, antes de la puntuación que cierra la frase y con su espacio. Revisa `preview` en la vista previa: muestra cómo queda el texto alrededor.
 3. El campo incluye el CSL JSON del item para que Zotero pueda renderizarlo sin conexión.
 4. El campo usa el mismo formato que el plugin de Zotero (URI real del item en tu biblioteca, `citationID` aleatorio, `noteIndex` 0), así que al pulsar *Refresh* Zotero enlaza la cita con el item de la biblioteca.
-   Si el documento no tenía preferencias de Zotero, se crean con el estilo y el idioma usados (`documentPrefs: "creadas"`); así Word no pide elegir estilo al refrescar. Las preferencias existentes nunca se modifican.
+   Si el documento no tenía preferencias de Zotero, se crean con el estilo y el idioma usados (`documentPrefs: "creadas"`; en la vista previa, `"se crearían"`); así Word no pide elegir estilo al refrescar. Las preferencias existentes nunca se modifican.
    Si la respuesta trae `warnings` (p. ej. el documento está configurado con otro estilo), transmítelos al usuario.
-5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después del párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
+5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después de la nueva, también dentro del mismo párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
 6. Las citas ya insertadas no se reescriben: si una cita nueva cambia la numeración o la desambiguación de las anteriores, el plugin de Zotero las actualiza al pulsar *Refresh* en Word.
 
 ### Actualizar la bibliografía
@@ -97,7 +112,7 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 ### Flujo típico en Word
 
 1. `zotero_read_docx` → conocer la estructura.
-2. `zotero_insert_citation_docx` para cada cita (una por párrafo).
+2. `zotero_insert_citation_docx` para cada afirmación que lleve cita, con `afterText` y, si varias fuentes respaldan la misma idea, `keys`.
 3. `zotero_update_bibliography_docx` → campo BIBL al final.
 
 Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan correctamente y la bibliografía se actualiza automáticamente.
@@ -108,6 +123,7 @@ Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan cor
 - No modifiques la librería de Zotero salvo para añadir, con `zotero_add_item` y confirmación del usuario, los items que él elija.
 - No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): guárdalos antes con `zotero_add_item`.
 - No cambies el estilo de citación a mitad de documento.
+- Cita cada fuente donde respalda una afirmación concreta y agrupa las de una misma idea (ver «Cómo citar bien»); no amontones citas al final de un párrafo.
 - Respeta el idioma del documento (`locale: es-ES` para documentos en español).
 - En documentos Word, no uses las herramientas de Markdown (zotero_cite textual en el .docx) — usa las de docx.
 - No expongas credenciales ni rutas absolutas del sistema.
