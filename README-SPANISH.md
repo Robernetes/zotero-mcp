@@ -129,7 +129,7 @@ Los documentos solo se leen y escriben dentro de las **carpetas permitidas**: la
 | Herramienta | Descripción |
 |---|---|
 | `zotero_status` | Verifica la conexión con la API local. |
-| `zotero_search` | Busca items (`query`, `qmode`, `itemType`, `collectionKey`, `limit`, `sort`, `direction`). |
+| `zotero_search` | Busca items (`query`, `qmode`, `itemType`, `collectionKey`, `limit`, `sort`, `direction`). Si ningún item contiene todas las palabras de la búsqueda, devuelve los que contienen alguna, con `partialMatch: true` y las `matchedWords` de cada item. Una frase entre comillas se busca tal cual. |
 | `zotero_get_item` | Detalle completo de un item por `key`. |
 | `zotero_list_collections` | Lista las colecciones (`key`, `name`, `parentKey`). |
 | `zotero_cite` | Cita textual (`key`, `style`, `locale`, `locator`, `label`, `prefix`, `suffix`, `register`). |

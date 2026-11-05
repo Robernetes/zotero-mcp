@@ -30,7 +30,10 @@ export function registerLibraryTools(server, { zotero, workspace }) {
   server.registerTool(
     'zotero_search',
     {
-      description: 'Busca items en la biblioteca local de Zotero. Devuelve key, tipo, título, autores, año, DOI/URL.',
+      description:
+        'Busca items en la biblioteca local de Zotero. Devuelve key, tipo, título, autores, año, DOI/URL. ' +
+        'Con varias palabras busca primero los items que las contienen todas; si no hay ninguno, devuelve los que contienen ' +
+        'alguna (partialMatch: true), ordenados por cuántas contienen (matchedWords). Una frase entre comillas se busca exacta.',
       inputSchema: {
         query: z.string().optional().describe('Texto de búsqueda. Vacío = listar items.'),
         qmode: z.enum(['titleCreatorYear', 'everything']).optional().describe('Modo de búsqueda (default titleCreatorYear).'),
@@ -43,6 +46,21 @@ export function registerLibraryTools(server, { zotero, workspace }) {
     },
     async (args) => run(async () => {
       const items = await zotero.search(args);
+      if (items.length === 0 && args.query) {
+        const partial = await zotero.searchAnyWords(args);
+        if (partial.items.length > 0) {
+          return ok({
+            query: args.query,
+            count: partial.items.length,
+            partialMatch: true,
+            words: partial.words,
+            note:
+              'Ningún item contiene todas las palabras de la búsqueda; se muestran los que contienen alguna, ' +
+              'empezando por los que contienen más (matchedWords). Comprueba por el título que cada uno trate el tema antes de citarlo.',
+            items: partial.items,
+          });
+        }
+      }
       return ok({ query: args.query ?? null, count: items.length, items });
     })
   );

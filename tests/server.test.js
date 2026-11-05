@@ -28,6 +28,10 @@ function fakeContext(overrides = {}) {
       calls.push(['search', args]);
       return [{ key: 'AAAA1111', title: 'Uno' }];
     },
+    searchAnyWords: async (args) => {
+      calls.push(['searchAnyWords', args]);
+      return { words: [], items: [] };
+    },
     getItem: async (key) => ({ key }),
     listCollections: async () => [{ key: 'TESIS001', name: 'Tesis', parentKey: null }],
     getByKeys: async (keys) => keys.map((k) => ITEMS[k]).filter(Boolean).map((i) => ({ ...i })),
@@ -131,6 +135,30 @@ test('las herramientas de biblioteca pasan los argumentos y devuelven JSON', asy
     assert.equal((await call('zotero_list_collections')).collections[0].key, 'TESIS001');
     // Validación de zod antes de llegar al handler.
     assert.match((await call('zotero_search', { limit: 500 })).error, /limit/);
+  } finally {
+    await close();
+  }
+});
+
+test('zotero_search recurre a las palabras sueltas cuando ninguna coincide del todo', async () => {
+  const partial = { key: 'CCCC3333', title: 'Binary analysis', matchedWords: ['binary', 'analysis'] };
+  const ctx = fakeContext({
+    zotero: {
+      search: async () => [],
+      searchAnyWords: async (args) => (args.query === 'sin nada' ? { words: ['nada'], items: [] } : { words: ['reverse', 'binary', 'analysis'], items: [partial] }),
+    },
+  });
+  const { call, close } = await connect(ctx);
+  try {
+    const res = await call('zotero_search', { query: 'reverse binary analysis', collectionKey: 'TESIS001' });
+    assert.equal(res.partialMatch, true);
+    assert.equal(res.count, 1);
+    assert.deepEqual(res.words, ['reverse', 'binary', 'analysis']);
+    assert.deepEqual(res.items[0].matchedWords, ['binary', 'analysis']);
+    assert.ok(res.note.includes('alguna'));
+    // Sin resultados parciales, la respuesta es la normal.
+    const none = await call('zotero_search', { query: 'sin nada' });
+    assert.deepEqual(none, { query: 'sin nada', count: 0, items: [] });
   } finally {
     await close();
   }
