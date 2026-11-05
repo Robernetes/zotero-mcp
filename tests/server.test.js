@@ -220,14 +220,47 @@ test('zotero_add_item muestra la vista previa y guarda solo con apply', async ()
   }
 });
 
-test('zotero_add_item no guarda duplicados', async () => {
-  const ctx = fakeContext({ zotero: { findExisting: async () => ({ key: 'EXIST001', title: 'Nuevo' }) } });
+test('zotero_add_item no guarda duplicados y explica cómo citar el item existente', async () => {
+  const ctx = fakeContext({ zotero: { findExisting: async () => ({ key: 'EXIST001', title: 'Nuevo', collections: ['TESIS001'] }) } });
   const { call, close } = await connect(ctx);
   try {
     const res = await call('zotero_add_item', { doi: '10.1000/NUEVO', apply: true });
     assert.equal(res.saved, false);
-    assert.equal(res.inLibrary.key, 'EXIST001');
+    assert.deepEqual(res.inLibrary, { key: 'EXIST001', title: 'Nuevo', collections: ['Tesis'] });
+    assert.ok(res.message.includes('key EXIST001 (colecciones: «Tesis»): cítalo con esa key'), res.message);
+    assert.match(res.message, /No uses allowDuplicate/);
+    assert.doesNotMatch(res.message, /usa allowDuplicate/);
+
+    const same = await call('zotero_add_item', { doi: '10.1000/NUEVO', collectionKey: 'TESIS001', apply: true });
+    assert.equal(same.inTargetCollection, true);
+    assert.match(same.message, /Ya está en la biblioteca y en «Tesis»/);
     assert.ok(!ctx.calls.some((c) => c[0] === 'importCsl'));
+  } finally {
+    await close();
+  }
+});
+
+test('zotero_add_item con un item de otra colección pide arrastrarlo en Zotero, no duplicarlo', async () => {
+  const ctx = fakeContext({
+    zotero: {
+      findExisting: async () => ({ key: 'EXIST001', title: 'Nuevo', collections: [] }),
+      listCollections: async () => [{ key: 'TESIS001', name: 'Tesis', parentKey: null }],
+    },
+  });
+  const { call, close } = await connect(ctx);
+  try {
+    const res = await call('zotero_add_item', { doi: '10.1000/NUEVO', collectionKey: 'TESIS001', apply: true });
+    assert.equal(res.saved, false);
+    assert.equal(res.inTargetCollection, false);
+    assert.ok(res.message.includes('(sin colección)'), res.message);
+    assert.match(res.message, /arrastre a esa colección en Zotero/);
+
+    // Solo si se pide expresamente: la vista previa y el guardado avisan del duplicado.
+    const preview = await call('zotero_add_item', { doi: '10.1000/NUEVO', allowDuplicate: true });
+    assert.match(preview.warnings[0], /Crea un duplicado de EXIST001/);
+    const forced = await call('zotero_add_item', { doi: '10.1000/NUEVO', allowDuplicate: true, apply: true });
+    assert.equal(forced.saved, true);
+    assert.match(forced.warnings[0], /Se creó un duplicado de EXIST001/);
   } finally {
     await close();
   }

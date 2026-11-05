@@ -36,6 +36,12 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 
 ### Corregido
 
+- `zotero_add_item` sugería `allowDuplicate:true` cuando la publicación ya estaba en la
+  biblioteca, y los modelos lo usaban para «añadirla» a otra colección creando duplicados.
+  Ahora indica la key y las colecciones del item existente, explica que se cita con esa
+  key (y que para verlo en otra colección hay que arrastrarlo en Zotero) y avisa cuando
+  se fuerza un duplicado. `inLibrary` incluye las colecciones del item, también en
+  `zotero_find_external`.
 - `zotero_insert_citation_docx` pegaba la cita detrás del punto y sin espacio
   ("…del software.(Autor, 2020)"); ahora va antes de la puntuación que cierra la
   frase y separada por un espacio: "…del software (Autor, 2020).". La numeración

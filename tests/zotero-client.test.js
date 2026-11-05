@@ -156,7 +156,7 @@ test('findExisting encuentra por DOI (también en Extra) y por título', async (
     const q = new URL(url).searchParams.get('q');
     let body = [];
     if (q === '"10.1000/ejemplo"') body = [{ key: 'OTRO0001', data: { title: 'Otro', DOI: '10.1000/ejemplo2' } }, SAMPLE_ITEM];
-    if (q === '"10.2000/libro"') body = [{ key: 'LIBRO001', data: { itemType: 'book', title: 'Un libro', extra: 'Tipo: x\nDOI: 10.2000/LIBRO' } }];
+    if (q === '"10.2000/libro"') body = [{ key: 'LIBRO001', data: { itemType: 'book', title: 'Un libro', extra: 'Tipo: x\nDOI: 10.2000/LIBRO', collections: ['COL00001'] } }];
     if (q === 'ejemplo artículo') body = [{ key: 'OTRO0002', data: { title: 'Otro artículo de ejemplo' } }, SAMPLE_ITEM];
     return { ok: true, json: async () => body };
   });
@@ -165,7 +165,9 @@ test('findExisting encuentra por DOI (también en Extra) y por título', async (
     assert.equal((await client.findExisting({ doi: 'https://doi.org/10.1000/EJEMPLO' })).key, 'ABC12345');
     assert.ok(calls[0].includes('/users/0/items/top?'));
     assert.ok(calls[0].includes('qmode=everything'));
-    assert.equal((await client.findExisting({ doi: '10.2000/libro' })).key, 'LIBRO001');
+    const libro = await client.findExisting({ doi: '10.2000/libro' });
+    assert.equal(libro.key, 'LIBRO001');
+    assert.deepEqual(libro.collections, ['COL00001'], 'incluye las colecciones del item');
     // Sin DOI coincidente, cae al título (sin distinguir mayúsculas ni puntuación).
     assert.equal((await client.findExisting({ doi: '10.9999/nada', title: 'Un artículo de ejemplo!' })).key, 'ABC12345');
     assert.ok(calls.at(-1).includes('qmode=titleCreatorYear'));

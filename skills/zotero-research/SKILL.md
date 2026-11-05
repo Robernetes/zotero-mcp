@@ -18,7 +18,7 @@ Este flujo conecta con la biblioteca **local** de Zotero (API local en el puerto
 Si la biblioteca no tiene lo que el usuario necesita, o pide fuentes nuevas, usa `zotero_find_external`:
 
 1. `query` con el tema, título o autores (en el idioma de las publicaciones buscadas; en inglés suele haber más resultados), o `doi` si ya lo conoces. Filtra con `yearFrom`/`yearTo` si pide fuentes recientes, y usa `includeAbstract: true` para juzgar la relevancia.
-2. Presenta título, autores, año, revista y DOI. Señala cuáles tienen acceso abierto (`openAccessUrl`) y cuáles ya están en la biblioteca (`inLibrary.key`): esas se pueden citar directamente con su key.
+2. Presenta título, autores, año, revista y DOI. Señala cuáles tienen acceso abierto (`openAccessUrl`) y cuáles ya están en la biblioteca (`inLibrary.key`, con sus colecciones en `inLibrary.collections`): esas se pueden citar directamente con su key, sin guardarlas otra vez.
 3. Las que no están en la biblioteca **no se pueden citar todavía**: hay que guardarlas antes con `zotero_add_item` (ver abajo).
 4. Si llega un aviso de que OpenAlex no respondió, los resultados son de Crossref; menciónalo solo si importa (p. ej. no hay datos de acceso abierto).
 
@@ -27,7 +27,8 @@ Si la biblioteca no tiene lo que el usuario necesita, o pide fuentes nuevas, usa
 1. Guarda **solo lo que el usuario elija**: nunca guardes resultados por tu cuenta ni en bloque sin que lo pida.
 2. Llama `zotero_add_item` con `doi` (o `openAlexId` si no tiene DOI), y `collectionKey` (de `zotero_list_collections`) y `tags` si el usuario los indica. Sin `apply` devuelve una vista previa: muéstrale título, autores, año y la colección destino (`target`).
 3. Cuando confirme, repite la llamada con `apply: true`. La respuesta trae la `key` del item nuevo: úsala directamente con `zotero_cite` o `zotero_insert_citation_docx`.
-4. Si responde `saved: false` porque ya existe (`inLibrary.key`), usa esa key; no fuerces `allowDuplicate` salvo que el usuario lo pida.
+4. Si responde `saved: false` porque ya existe (`inLibrary.key`), **usa esa key para citar**. Aunque el usuario haya pedido guardarlo en otra colección, **no uses `allowDuplicate`**: crearía un segundo item igual en su biblioteca. zotero-mcp no puede añadir un item existente a otra colección; si el usuario lo quiere también ahí, puede arrastrarlo en Zotero. Usa `allowDuplicate` solo si el usuario pide expresamente un duplicado.
+   - Al terminar, dile qué publicaciones no se añadieron a la colección pedida porque ya estaban en la biblioteca, y en qué colecciones están (`inLibrary.collections`).
 5. Requiere Zotero abierto. Sin `collectionKey` se guarda en la colección seleccionada en Zotero: si el usuario no dijo dónde, pregúntale o díselo en la vista previa.
 
 ## 2. Obtener detalles
@@ -134,6 +135,7 @@ Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan cor
 
 - No inventes citas ni referencias: verifica siempre con `zotero_search` / `zotero_get_item` que el item exista.
 - No modifiques la librería de Zotero salvo para añadir, con `zotero_add_item` y confirmación del usuario, los items que elija el usuario.
+- No crees duplicados: si una publicación ya está en la biblioteca, cítala con su key aunque esté en otra colección (`allowDuplicate` solo si el usuario lo pide expresamente).
 - No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): guárdalos antes con `zotero_add_item`.
 - No cambies el estilo de citación a mitad de documento.
 - Cita cada fuente donde respalda una afirmación concreta y agrupa las de una misma idea (ver «Cómo citar bien»); no amontones citas al final de un párrafo.

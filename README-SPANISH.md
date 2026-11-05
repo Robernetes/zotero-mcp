@@ -139,7 +139,7 @@ Los documentos solo se leen y escriben dentro de las **carpetas permitidas**: la
 | `zotero_remove_citations_docx` | Quita citas Zotero de un `.docx` (todas, o solo algunas fuentes con `keys`) y la bibliografía, sin tocar el resto del documento. |
 | `zotero_update_bibliography_docx` | Inserta o actualiza el campo `ADDIN ZOTERO_BIBL` en un `.docx` (un párrafo por referencia). |
 | `zotero_find_external` | Busca publicaciones **fuera** de la biblioteca en OpenAlex/Crossref (`query` o `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` indica si cada una ya está en Zotero. |
-| `zotero_add_item` | Guarda una publicación en la biblioteca por `doi` u `openAlexId`, opcionalmente en `collectionKey` y con `tags`. Sin `apply: true` es una vista previa; no guarda duplicados salvo `allowDuplicate: true`. |
+| `zotero_add_item` | Guarda una publicación en la biblioteca por `doi` u `openAlexId`, opcionalmente en `collectionKey` y con `tags`. Sin `apply: true` es una vista previa. Si la publicación ya está en la biblioteca no la guarda otra vez: la respuesta da su `key` y sus colecciones, para citarla directamente (zotero-mcp no puede añadir un item existente a otra colección; arrástralo en Zotero). `allowDuplicate: true` fuerza un duplicado. |
 
 ## Ejemplos de uso (JSON)
 
@@ -294,7 +294,7 @@ Con `keys` se quitan solo esas fuentes (en una cita agrupada se conservan las de
 { "tool": "zotero_find_external", "args": { "doi": "10.1017/S0144686X19000230", "includeAbstract": true } }
 ```
 
-Cada resultado trae `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` e `inLibrary` (`{ key, title }` si el item ya está en Zotero, por DOI o por título exacto; `null` si no). Con `source: "auto"` (por defecto) usa OpenAlex y, si falla, Crossref; un DOI se busca en Crossref y luego en OpenAlex. No guarda nada en Zotero.
+Cada resultado trae `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` e `inLibrary` (`{ key, title, collections }` si el item ya está en Zotero, por DOI o por título exacto; `null` si no). Con `source: "auto"` (por defecto) usa OpenAlex y, si falla, Crossref; un DOI se busca en Crossref y luego en OpenAlex. No guarda nada en Zotero.
 
 ### 11. Guardar en tu biblioteca
 

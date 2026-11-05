@@ -139,7 +139,7 @@ Documents are only read and written inside the **allowed folders**: those in `ZO
 | `zotero_remove_citations_docx` | Remove Zotero citations from a `.docx` (all of them, or only some sources with `keys`) and the bibliography, without touching the rest of the document. |
 | `zotero_update_bibliography_docx` | Insert or update the `ADDIN ZOTERO_BIBL` field in a `.docx` (one paragraph per reference). |
 | `zotero_find_external` | Search publications **outside** the library in OpenAlex/Crossref (`query` or `doi`, `source`, `limit`, `yearFrom`, `yearTo`, `includeAbstract`); `inLibrary` tells whether each one is already in Zotero. |
-| `zotero_add_item` | Save a publication to the library by `doi` or `openAlexId`, optionally into `collectionKey` with `tags`. Preview without `apply: true`; never saves duplicates unless `allowDuplicate: true`. |
+| `zotero_add_item` | Save a publication to the library by `doi` or `openAlexId`, optionally into `collectionKey` with `tags`. Preview without `apply: true`. If the publication is already in the library it is not saved again: the response gives its `key` and collections, to cite it directly (zotero-mcp cannot add an existing item to another collection; drag it in Zotero). `allowDuplicate: true` forces a duplicate. |
 
 ## Usage examples (JSON)
 
@@ -294,7 +294,7 @@ With `keys` only those sources are removed (in a grouped citation, the other sou
 { "tool": "zotero_find_external", "args": { "doi": "10.1017/S0144686X19000230", "includeAbstract": true } }
 ```
 
-Each result includes `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` and `inLibrary` (`{ key, title }` if the item is already in Zotero, matched by DOI or exact title; `null` otherwise). With `source: "auto"` (default) it uses OpenAlex and falls back to Crossref if OpenAlex fails; a DOI is looked up in Crossref and then OpenAlex. Nothing is saved to Zotero.
+Each result includes `title`, `authors`, `year`, `type`, `venue`, `publisher`, `doi`, `url`, `openAccessUrl`, `citedBy` and `inLibrary` (`{ key, title, collections }` if the item is already in Zotero, matched by DOI or exact title; `null` otherwise). With `source: "auto"` (default) it uses OpenAlex and falls back to Crossref if OpenAlex fails; a DOI is looked up in Crossref and then OpenAlex. Nothing is saved to Zotero.
 
 ### 11. Save to your library
 
