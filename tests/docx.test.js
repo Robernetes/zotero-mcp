@@ -19,6 +19,9 @@ import {
   buildCitationRuns,
   locateCitation,
   insertCitationAt,
+  removeCitations,
+  removeBibliography,
+  describeParagraphs,
   findBibliographyField,
   upsertBibliography,
   buildBibliographyParagraphs,
@@ -374,12 +377,13 @@ test('listDocumentCitations agrupa por campo con posición y localizador', async
   assert.deepEqual(citations, [
     {
       startChild: 0,
+      citationID: 'a',
       items: [
         { key: 'AAAA1111', itemData: null, locator: '12', label: 'page' },
         { key: 'BBBB2222', itemData: null },
       ],
     },
-    { startChild: 3, items: [{ key: null, itemData: { id: 3, title: 'C' } }] },
+    { startChild: 3, citationID: 'b', items: [{ key: null, itemData: { id: 3, title: 'C' } }] },
   ]);
   // Párrafos de primer nivel: 0 → hijo 0, 1 → hijo 2 (la tabla es el hijo 1), 2 → hijo 3.
   assert.equal(paragraphChildIndex(ctx.doc, 1), 2);
@@ -485,4 +489,64 @@ test('buildCitationRuns agrupa varias fuentes en una sola cita', () => {
   assert.deepEqual(json.citationItems.map((c) => c.id), [1, 2]);
   assert.equal(json.citationItems[0].prefix, 'véase');
   assert.equal(json.citationItems[1].uris[0], 'http://zotero.org/users/0/items/BBB');
+});
+
+// --- Quitar citas y bibliografía ----------------------------------------------
+
+/** Runs de una cita con las fuentes `keys` (ids 1, 2…) y el texto visible indicado. */
+function groupedRuns(citationID, keys, visible) {
+  return buildCitationRuns({
+    citationID,
+    noteIndex: 0,
+    formattedCitation: visible,
+    items: keys.map((k, i) => ({ itemData: { id: i + 1, type: 'book', title: k }, uris: [`http://zotero.org/users/0/items/${k}`] })),
+  });
+}
+
+test('removeCitations quita todas las citas y deja el texto y el formato como estaban', async () => {
+  const original = docXml(
+    '<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Según Chikofsky la idea cambió. Hoy se aplica a binarios.</w:t></w:r></w:p>' + SECT
+  );
+  const ctx = await load(original);
+  const before = readParagraphs(ctx)[0].text;
+  insertCitationAt(ctx.doc, locateCitation(ctx.doc, { afterText: 'Según Chikofsky' }), groupedRuns('c1', ['AAA'], '(A, 1990)'));
+  insertCitationAt(ctx.doc, locateCitation(ctx.doc, { afterText: 'a binarios.' }), groupedRuns('c2', ['BBB', 'CCC'], '(B, 2020; C, 2021)'));
+  assert.equal(readParagraphs(ctx)[0].text, 'Según Chikofsky (A, 1990) la idea cambió. Hoy se aplica a binarios (B, 2020; C, 2021).');
+
+  const res = removeCitations(ctx.doc);
+  assert.deepEqual([res.removedCitations, res.removedSources, res.updatedCitations], [2, 3, 0]);
+  assert.equal(readParagraphs(ctx)[0].text, before);
+  assert.deepEqual(describeParagraphs(ctx.doc, res.paragraphs), [{ index: 0, text: before }]);
+  const xml = serializeDocument(ctx.doc);
+  assert.ok(xml.includes('<w:jc w:val="both"/>'), 'conserva la justificación');
+  assert.ok(!xml.includes('ZOTERO_ITEM'));
+  assert.equal((xml.match(/<w:b\/>/g) || []).length, (xml.match(/<w:r>/g) || []).length, 'todos los runs siguen en negrita');
+});
+
+test('removeCitations con keys quita solo esas fuentes y reescribe la cita agrupada', async () => {
+  const ctx = await load(docXml('<w:p><w:r><w:t>Uno. Dos.</w:t></w:r></w:p>' + SECT));
+  insertCitationAt(ctx.doc, locateCitation(ctx.doc, { afterText: 'Uno.' }), groupedRuns('c1', ['AAA'], '(A, 1990)'));
+  insertCitationAt(ctx.doc, locateCitation(ctx.doc, { afterText: 'Dos.' }), groupedRuns('c2', ['AAA', 'BBB'], '(A, 1990; B, 2020)'));
+
+  const res = removeCitations(ctx.doc, { keys: ['AAA'], texts: new Map([['c2', '(B, 2020)']]) });
+  assert.deepEqual([res.removedCitations, res.removedSources, res.updatedCitations], [1, 2, 1]);
+  assert.equal(readParagraphs(ctx)[0].text, 'Uno. Dos (B, 2020).');
+  const [left] = listDocumentCitations(ctx.doc);
+  assert.equal(left.citationID, 'c2');
+  assert.deepEqual(left.items.map((i) => i.key), ['BBB']);
+
+  const none = removeCitations(ctx.doc, { keys: ['ZZZ'] });
+  assert.equal(none.removedSources, 0, 'una key que no está no cambia nada');
+});
+
+test('removeBibliography quita el campo y sus párrafos', async () => {
+  const ctx = await load(BASIC_DOC);
+  assert.equal(removeBibliography(ctx.doc), null);
+  upsertBibliography(ctx.doc, ['Ref 1', 'Ref 2']);
+  const count = readParagraphs(ctx).length;
+  const removed = removeBibliography(ctx.doc);
+  assert.equal(removed.paragraphs, count - 2);
+  assert.equal(findBibliographyField(ctx.doc), null);
+  assert.deepEqual(readParagraphs(ctx).map((p) => p.text), ['Primer párrafo.', 'Segundo párrafo con texto.']);
+  assert.ok(serializeDocument(ctx.doc).includes('<w:sectPr>'), 'conserva la sección');
 });

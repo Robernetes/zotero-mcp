@@ -74,6 +74,7 @@ try {
     'zotero_bibliography',
     'zotero_read_docx',
     'zotero_insert_citation_docx',
+    'zotero_remove_citations_docx',
     'zotero_update_bibliography_docx',
     'zotero_find_external',
     'zotero_add_item',

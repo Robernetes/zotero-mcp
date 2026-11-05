@@ -86,7 +86,7 @@ async function connect(ctx, { roots } = {}) {
   return { client, call, setRoots, state, close: () => client.close() };
 }
 
-test('el servidor registra las 11 herramientas', async () => {
+test('el servidor registra las 12 herramientas', async () => {
   const { client, close } = await connect(fakeContext());
   try {
     assert.deepEqual(client.getServerVersion(), SERVER_INFO);
@@ -103,6 +103,7 @@ test('el servidor registra las 11 herramientas', async () => {
       'zotero_bibliography',
       'zotero_read_docx',
       'zotero_insert_citation_docx',
+      'zotero_remove_citations_docx',
       'zotero_update_bibliography_docx',
       'zotero_find_external',
       'zotero_add_item',
@@ -374,6 +375,51 @@ test('zotero_insert_citation_docx valida key/keys, locator y la posición', asyn
     assert.match((await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111' })).error, /afterText/);
     assert.match((await call('zotero_insert_citation_docx', { filePath: file, keys: ['AAAA1111', 'NOPE0000'], paragraphIndex: 0 })).error, /"NOPE0000"/);
     assert.match((await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', afterText: 'No está' })).error, /No se encontró el texto/);
+  } finally {
+    await close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('zotero_remove_citations_docx deshace citas sin tocar el resto del documento', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zmcp-server-'));
+  const { call, close } = await connect(fakeContext());
+  try {
+    const file = path.join(dir, 'doc.docx');
+    const original = 'La definición es clásica. Hoy se aplica a binarios y firmware.';
+    await writeDocx(file, [original]);
+    await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', afterText: 'La definición es clásica.', apply: true });
+    await call('zotero_insert_citation_docx', { filePath: file, keys: ['AAAA1111', 'BBBB2222'], afterText: 'binarios y firmware.', apply: true });
+    await call('zotero_update_bibliography_docx', { filePath: file, apply: true });
+
+    const preview = await call('zotero_remove_citations_docx', { filePath: file, keys: ['AAAA1111'] });
+    assert.equal(preview.dryRun, true);
+    assert.deepEqual([preview.removedCitations, preview.updatedCitations, preview.remainingCitations], [1, 1, 1]);
+    assert.equal(preview.paragraphs[0].text, 'La definición es clásica. Hoy se aplica a binarios y firmware (García, 2019).');
+    assert.equal(preview.bibliographyRemoved, false);
+    assert.ok(preview.warnings.some((w) => /zotero_update_bibliography_docx/.test(w)));
+    assert.equal((await call('zotero_read_docx', { filePath: file })).paragraphs[0].text.includes('Smith'), true, 'la vista previa no escribe');
+
+    const all = await call('zotero_remove_citations_docx', { filePath: file, apply: true });
+    assert.deepEqual([all.removedCitations, all.remainingCitations, all.bibliographyRemoved, all.written], [2, 0, true, true]);
+    const { paragraphs } = await call('zotero_read_docx', { filePath: file });
+    assert.deepEqual(paragraphs.map((p) => p.text), [original]);
+
+    assert.match((await call('zotero_remove_citations_docx', { filePath: file })).error, /no tiene citas ni bibliografía/);
+  } finally {
+    await close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('zotero_remove_citations_docx avisa si las keys no están en el documento', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zmcp-server-'));
+  const { call, close } = await connect(fakeContext());
+  try {
+    const file = path.join(dir, 'doc.docx');
+    await writeDocx(file, ['Texto.']);
+    await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', paragraphIndex: 0, apply: true });
+    assert.match((await call('zotero_remove_citations_docx', { filePath: file, keys: ['NOPE0000'] })).error, /Ninguna cita.*El documento cita: AAAA1111/);
   } finally {
     await close();
     rmSync(dir, { recursive: true, force: true });

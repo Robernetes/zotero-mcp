@@ -18,6 +18,12 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
   `preview` con el texto alrededor de la cita.
 - La skill `zotero-research` explica cómo citar: junto a la afirmación que respalda cada
   fuente, agrupando las de una misma idea y sin amontonar citas al final del párrafo.
+- Herramienta `zotero_remove_citations_docx`: quita citas de Zotero de un `.docx` (todas,
+  o solo las fuentes de `keys`) y la bibliografía, sin tocar el texto, el formato ni los
+  estilos del documento. Sirve para rehacer citas sin regenerar el archivo.
+- La skill pide buscar una fuente específica para cada afirmación (y la fuente original
+  para las definiciones), avisar de lo que queda sin fuente, hacer siempre la vista previa
+  y no recrear nunca un documento con otras herramientas.
 - `scripts/e2e.mjs` rechaza las llamadas con `apply: true` salvo con `--allow-write`,
   y explica el error cuando el JSON llega roto (Windows PowerShell 5.1).
 

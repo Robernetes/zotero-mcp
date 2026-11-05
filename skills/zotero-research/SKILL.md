@@ -54,9 +54,12 @@ Estas reglas valen para Markdown y para Word:
 2. **Agrupa las fuentes de una misma idea en una sola cita**: "(Chikofsky & Cross, 1990; Pang et al., 2021)", nunca "(Chikofsky & Cross, 1990)(Pang et al., 2021)". En Word, usa `keys` con todas sus keys.
 3. **La cita va antes del punto** que cierra la frase y separada por un espacio: "…del software (Autor, 2020)." (en Word se hace solo).
 4. **Cada fuente debe sostener lo que dice el texto.** Antes de citar, comprueba con el título y el resumen (`includeAbstract: true` en `zotero_find_external`, o `zotero_get_item`) qué afirmación concreta respalda. Si ninguna frase del texto corresponde a una fuente, no la cites: díselo al usuario.
+   - **Busca por afirmación.** Para cada idea que necesite respaldo, busca una fuente específica con `zotero_find_external` (una búsqueda por idea, con sus términos clave). Usa los items que ya están en la biblioteca o en una colección solo si encajan de verdad con esa afirmación, o si el usuario pide usar esos.
+   - **Definiciones y conceptos: la fuente original.** Para una definición formal o un concepto acuñado, cita el trabajo que lo definió o la referencia clásica del campo (búscala por título o autor), no un trabajo reciente que solo lo menciona.
+   - **Avisa de lo que queda sin fuente.** Al terminar, dile al usuario qué afirmaciones no tienen cita porque no encontraste una fuente adecuada.
 5. **Sin relleno.** Normalmente bastan 1-3 fuentes por afirmación. No repitas la misma fuente en frases seguidas del mismo párrafo.
 6. **Paráfrasis y citas textuales.** Para una cita textual o una idea de una página concreta, añade `locator` (p. ej. `"15"`) y `label: "page"`.
-7. **Revisa antes de escribir.** Muestra al usuario dónde irá cada cita (en Word, el campo `preview` de la vista previa) antes de escribir con `apply: true`, salvo que ya haya pedido escribir sin revisar.
+7. **Revisa antes de escribir.** Llama siempre primero sin `apply` y comprueba en `preview` que la cita queda junto a la frase correcta; muéstraselo al usuario antes de escribir con `apply: true`, salvo que haya pedido escribir sin revisar.
 
 ## 4. Mantener la bibliografía actualizada en Markdown
 
@@ -97,6 +100,14 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 5. El texto de la cita se calcula a partir de las citas que ya hay en el documento (antes y después de la nueva, también dentro del mismo párrafo), así que la numeración IEEE/Vancouver y la desambiguación ("2020a") corresponden al documento. Las citas de Word son independientes del registro de `zotero_cite`: no hace falta (ni sirve) llamar a `zotero_cite` antes de insertarlas.
 6. Las citas ya insertadas no se reescriben: si una cita nueva cambia la numeración o la desambiguación de las anteriores, el plugin de Zotero las actualiza al pulsar *Refresh* en Word.
 
+### Quitar o rehacer citas
+
+Para deshacer citas (por ejemplo, para volver a citar con otras fuentes) usa `zotero_remove_citations_docx`; **nunca regeneres el documento ni copies su texto a un archivo nuevo**.
+
+1. `zotero_remove_citations_docx { "filePath": "...", "keys": ["ABC12345"] }` quita las citas de esas fuentes (en una cita agrupada, solo esas fuentes) y muestra cómo quedan los párrafos. Sin `keys` quita todas las citas y la bibliografía.
+2. Repite con `apply: true` para escribir. El resto del documento (texto, formato, estilos) no cambia, y también se quita el espacio que separaba la cita.
+3. Si quitaste algunas fuentes y el documento conserva la bibliografía, actualízala después con `zotero_update_bibliography_docx`.
+
 ### Actualizar la bibliografía
 
 1. Después de insertar todas las citas, llama `zotero_update_bibliography_docx` con `filePath` y `apply: true` (`style`/`locale` salen del documento si no se indican).
@@ -107,24 +118,27 @@ Para insertar citas y bibliografía en archivos Word, usa las herramientas espec
 - Solo se pueden leer y escribir documentos dentro de las carpetas permitidas (`workspace` en `zotero_status`), normalmente la carpeta de trabajo. Las rutas relativas se resuelven desde ella. Si un documento está "fuera de las carpetas permitidas", díselo al usuario y explica que puede añadir su carpeta a `ZOTERO_MCP_ALLOWED_DIRS`; no copies ni muevas el documento por tu cuenta.
 - Pide al usuario que **cierre el documento en Word** antes de escribir con `apply: true`: si está abierto, la herramienta falla con "el archivo está abierto o bloqueado" y no modifica nada.
 - Si la herramienta responde "El archivo cambió desde que se leyó", vuelve a ejecutarla (no hay que forzar nada).
-- Antes de sobrescribir se guarda `<archivo>.bak` con la versión anterior (salvo `ZOTERO_MCP_BACKUP=false`); la ruta aparece en `backupPath`.
+- Antes de sobrescribir se guarda `<archivo>.bak` con la versión anterior (salvo `ZOTERO_MCP_BACKUP=false`); la ruta aparece en `backupPath`. Cada escritura lo reemplaza: solo guarda la versión inmediatamente anterior.
+- **Modifica los documentos solo con las herramientas `zotero_*_docx`.** Nunca recrees, reescribas ni sobrescribas un documento con otras herramientas (python-docx, scripts, copiar el texto a un archivo nuevo): se pierden el formato, los estilos y la configuración del documento, y no se puede recuperar. Si algo no se puede hacer con las herramientas, explícaselo al usuario en lugar de improvisar.
 
 ### Flujo típico en Word
 
 1. `zotero_read_docx` → conocer la estructura.
-2. `zotero_insert_citation_docx` para cada afirmación que lleve cita, con `afterText` y, si varias fuentes respaldan la misma idea, `keys`.
+2. `zotero_insert_citation_docx` para cada afirmación que lleve cita, con `afterText` y, si varias fuentes respaldan la misma idea, `keys` (primero sin `apply`, revisando `preview`).
 3. `zotero_update_bibliography_docx` → campo BIBL al final.
+4. Para rehacer citas: `zotero_remove_citations_docx` y vuelve al paso 2.
 
 Al abrir el archivo en Word con el plugin de Zotero, las citas se renderizan correctamente y la bibliografía se actualiza automáticamente.
 
 ## Reglas
 
 - No inventes citas ni referencias: verifica siempre con `zotero_search` / `zotero_get_item` que el item exista.
-- No modifiques la librería de Zotero salvo para añadir, con `zotero_add_item` y confirmación del usuario, los items que él elija.
+- No modifiques la librería de Zotero salvo para añadir, con `zotero_add_item` y confirmación del usuario, los items que elija el usuario.
 - No cites resultados de `zotero_find_external` que no estén en la biblioteca (`inLibrary: null`): guárdalos antes con `zotero_add_item`.
 - No cambies el estilo de citación a mitad de documento.
 - Cita cada fuente donde respalda una afirmación concreta y agrupa las de una misma idea (ver «Cómo citar bien»); no amontones citas al final de un párrafo.
 - Respeta el idioma del documento (`locale: es-ES` para documentos en español).
 - En documentos Word, no uses las herramientas de Markdown (zotero_cite textual en el .docx) — usa las de docx.
+- Nunca recrees ni sobrescribas un documento del usuario con otras herramientas: para quitar citas usa `zotero_remove_citations_docx`.
 - No expongas credenciales ni rutas absolutas del sistema.
 - Si Zotero no está corriendo, `zotero_status` devolverá `ok: false`; indícalo al usuario y pídele que abra Zotero.
