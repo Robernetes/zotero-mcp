@@ -299,3 +299,83 @@ test('si el cliente no ofrece roots se usa la carpeta de arranque', async (t) =>
     await close();
   }
 });
+
+/** Escribe un .docx mínimo con un párrafo por texto. */
+async function writeDocx(file, paragraphs) {
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  const body = paragraphs.map((t) => `<w:p><w:r><w:t xml:space="preserve">${t}</w:t></w:r></w:p>`).join('');
+  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr/></w:body></w:document>`);
+  writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer' }));
+}
+
+test('zotero_insert_citation_docx cita tras la frase y agrupa varias fuentes', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zmcp-server-'));
+  const { call, close } = await connect(fakeContext());
+  try {
+    const file = path.join(dir, 'doc.docx');
+    await writeDocx(file, ['La definición es clásica. Hoy se aplica a binarios y firmware.']);
+
+    const preview = await call('zotero_insert_citation_docx', {
+      filePath: file,
+      keys: ['AAAA1111', 'BBBB2222'],
+      afterText: 'Hoy se aplica a binarios y firmware.',
+    });
+    assert.equal(preview.citation, '(García, 2019; Smith, 2020)', 'una sola cita, ordenada por el estilo');
+    assert.deepEqual(preview.keys, ['AAAA1111', 'BBBB2222']);
+    assert.equal(preview.preview, 'La definición es clásica. Hoy se aplica a binarios y firmware (García, 2019; Smith, 2020).');
+    assert.equal(preview.placement.beforePunctuation, true);
+    assert.equal(preview.documentPrefs, 'se crearían', 'la vista previa no dice que ya las creó');
+    assert.equal(preview.dryRun, true);
+
+    const written = await call('zotero_insert_citation_docx', {
+      filePath: file,
+      key: 'AAAA1111',
+      afterText: 'La definición es clásica.',
+      apply: true,
+    });
+    assert.equal(written.documentPrefs, 'creadas');
+    const [p] = (await call('zotero_read_docx', { filePath: file })).paragraphs;
+    assert.equal(p.text, 'La definición es clásica (Smith, 2020). Hoy se aplica a binarios y firmware.');
+  } finally {
+    await close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('la numeración IEEE tiene en cuenta las citas posteriores del mismo párrafo', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zmcp-server-'));
+  const { call, close } = await connect(fakeContext());
+  try {
+    const file = path.join(dir, 'doc.docx');
+    await writeDocx(file, ['Primera idea. Segunda idea.']);
+    const last = await call('zotero_insert_citation_docx', { filePath: file, key: 'BBBB2222', afterText: 'Segunda idea', style: 'ieee', apply: true });
+    assert.equal(last.citation, '[1]');
+    const first = await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', afterText: 'Primera idea', apply: true });
+    assert.equal(first.citation, '[1]', 'va antes de la cita existente, así que es la primera');
+    const [p] = (await call('zotero_read_docx', { filePath: file })).paragraphs;
+    assert.equal(p.text, 'Primera idea [1]. Segunda idea [1].', 'Zotero renumera la segunda al refrescar');
+  } finally {
+    await close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('zotero_insert_citation_docx valida key/keys, locator y la posición', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'zmcp-server-'));
+  const { call, close } = await connect(fakeContext());
+  try {
+    const file = path.join(dir, 'doc.docx');
+    await writeDocx(file, ['Texto.']);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, paragraphIndex: 0 })).error, /Indica key/);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', keys: ['BBBB2222'], paragraphIndex: 0 })).error, /no los dos/);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, keys: ['AAAA1111', 'BBBB2222'], locator: '5', paragraphIndex: 0 })).error, /una fuente/);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111' })).error, /afterText/);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, keys: ['AAAA1111', 'NOPE0000'], paragraphIndex: 0 })).error, /"NOPE0000"/);
+    assert.match((await call('zotero_insert_citation_docx', { filePath: file, key: 'AAAA1111', afterText: 'No está' })).error, /No se encontró el texto/);
+  } finally {
+    await close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

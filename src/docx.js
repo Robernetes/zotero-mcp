@@ -230,7 +230,7 @@ export async function ensureDocumentPrefs(ctx, { styleID, locale }) {
 
 /**
  * Párrafos de primer nivel del cuerpo (los índices que usan
- * insertCitationAtParagraph y upsertBibliography).
+ * locateCitation y upsertBibliography).
  */
 export function readParagraphs({ doc }) {
   return topLevelParagraphs(doc).map(({ node }, index) => {
@@ -375,12 +375,20 @@ export function paragraphChildIndex(doc, paragraphIndex) {
 // Construcción de campos
 // ---------------------------------------------------------------------------
 
-/** Runs (w:r) de un campo de cita ADDIN ZOTERO_ITEM. */
+/**
+ * Runs (w:r) de un campo de cita ADDIN ZOTERO_ITEM. Una cita puede agrupar varias
+ * fuentes (`items`, como "(Autor, 2020; Otro, 2021)"); para una sola fuente se
+ * pueden pasar uris/itemData/locator/… directamente.
+ * @param {object} opts
+ * @param {Array<{itemData: object, uris: string[], locator?: string, label?: string,
+ *   prefix?: string, suffix?: string}>} [opts.items]
+ */
 export function buildCitationRuns({
   citationID,
   noteIndex,
   formattedCitation,
   plainCitation,
+  items,
   uris,
   itemData,
   locator,
@@ -388,11 +396,15 @@ export function buildCitationRuns({
   prefix,
   suffix,
 }) {
-  const citationItem = { id: itemData.id, uris, itemData };
-  if (locator) citationItem.locator = String(locator);
-  if (label) citationItem.label = label;
-  if (prefix) citationItem.prefix = prefix;
-  if (suffix) citationItem.suffix = suffix;
+  const sources = items || [{ itemData, uris, locator, label, prefix, suffix }];
+  const citationItems = sources.map((s) => {
+    const citationItem = { id: s.itemData.id, uris: s.uris, itemData: s.itemData };
+    if (s.locator) citationItem.locator = String(s.locator);
+    if (s.label) citationItem.label = s.label;
+    if (s.prefix) citationItem.prefix = s.prefix;
+    if (s.suffix) citationItem.suffix = s.suffix;
+    return citationItem;
+  });
 
   const visible = formattedCitation || plainCitation || '';
   // Mismo formato que escribe el plugin de Zotero (incluida la clave "schema"
@@ -404,7 +416,7 @@ export function buildCitationRuns({
       plainCitation: plainCitation || formattedCitation || '',
       noteIndex,
     },
-    citationItems: [citationItem],
+    citationItems,
     schema: CSL_CITATION_SCHEMA,
   });
 
@@ -451,16 +463,114 @@ export async function hasParagraphStyle({ zip }, styleId) {
 // Inserción y actualización en el documento
 // ---------------------------------------------------------------------------
 
-/** Añade los runs al final del párrafo de primer nivel indicado. */
-export function insertCitationAtParagraph(doc, paragraphIndex, runs) {
+/**
+ * Dónde insertar una cita: tras `afterText` (en el párrafo indicado o, sin
+ * `paragraphIndex`, en el único párrafo que lo contiene) o al final del párrafo.
+ * Como en la redacción académica, la cita va antes de la puntuación que cierra
+ * la frase ("…del software (Autor, 2020).") y separada por un espacio.
+ * @param {object} doc
+ * @param {{paragraphIndex?: number, afterText?: string}} opts
+ * @returns {{paragraphIndex: number, bodyIndex: number, pos: number, text: string,
+ *   spaceBefore: boolean, spaceAfter: boolean, beforePunctuation: boolean,
+ *   citationsBefore: number, matchedText: string|null}}
+ *   pos: posición en el texto del párrafo; citationsBefore: campos ZOTERO_ITEM del
+ *   mismo párrafo que quedan antes de la cita nueva.
+ */
+export function locateCitation(doc, { paragraphIndex, afterText } = {}) {
   const paragraphs = topLevelParagraphs(doc);
-  const target = paragraphs[paragraphIndex];
-  if (!target) {
-    throw new Error(
-      `No existe el párrafo ${paragraphIndex} (el documento tiene ${paragraphs.length} párrafos). Usa zotero_read_docx para ver la estructura.`
-    );
+  const needle = afterText == null ? '' : String(afterText).trim();
+  let index = paragraphIndex;
+  let match = null;
+
+  if (needle) {
+    const candidates = index == null ? paragraphs.map((_, i) => i) : [index];
+    const found = [];
+    for (const i of candidates) {
+      if (!paragraphs[i]) break;
+      const text = paragraphPieces(paragraphs[i].node).map((p) => p.text).join('');
+      for (const m of findText(text, needle)) found.push({ i, ...m });
+    }
+    if (index != null && !paragraphs[index]) throw noParagraph(index, paragraphs.length);
+    const where = index == null ? 'el documento' : `el párrafo ${index}`;
+    if (found.length === 0) {
+      throw new Error(
+        `No se encontró el texto "${needle}" en ${where}. Copia un fragmento exacto del texto que devuelve zotero_read_docx.`
+      );
+    }
+    if (found.length > 1) {
+      const places = [...new Set(found.map((f) => f.i))].join(', ');
+      throw new Error(
+        `El texto "${needle}" aparece ${found.length} veces (párrafos ${places}). Usa un fragmento más largo para indicar un solo lugar.`
+      );
+    }
+    [match] = found;
+    index = match.i;
+  } else if (index == null) {
+    throw new Error('Indica paragraphIndex o afterText para saber dónde insertar la cita.');
   }
-  childrenOf(target.node).push(...runs);
+
+  const target = paragraphs[index];
+  if (!target) throw noParagraph(index, paragraphs.length);
+  const pieces = paragraphPieces(target.node);
+  const text = pieces.map((p) => p.text).join('');
+
+  const floor = match ? match.start : 0;
+  let pos = match ? match.end : text.length;
+  // Retroceder los espacios finales y la puntuación que cierra la frase.
+  while (pos > floor && /\s/.test(text[pos - 1])) pos--;
+  let beforePunct = pos;
+  while (beforePunct > floor && /[.,;:!?]/.test(text[beforePunct - 1])) beforePunct--;
+  const beforePunctuation = beforePunct < pos && beforePunct > floor;
+  if (beforePunctuation) pos = beforePunct;
+  // No partir un campo ni un hipervínculo: la cita va detrás.
+  const holder = pieces.find((p) => p.start < pos && pos < p.end && !p.splittable);
+  if (holder) pos = holder.end;
+
+  const citationsBefore = pieces.filter((p) => p.zoteroCitation && p.end <= pos).length;
+  return {
+    paragraphIndex: index,
+    bodyIndex: target.childIndex,
+    pos,
+    text,
+    spaceBefore: pos > 0 && !/[\s([{]/.test(text[pos - 1]),
+    spaceAfter: pos < text.length && /[\p{L}\p{N}([{]/u.test(text[pos]),
+    beforePunctuation,
+    citationsBefore,
+    matchedText: match ? text.slice(match.start, match.end) : null,
+  };
+}
+
+/**
+ * Inserta los runs de una cita en la posición calculada por locateCitation,
+ * partiendo el run de texto si hace falta y añadiendo los espacios de separación
+ * con el mismo formato que el texto que los rodea.
+ */
+export function insertCitationAt(doc, loc, runs) {
+  const target = topLevelParagraphs(doc)[loc.paragraphIndex];
+  if (!target) throw noParagraph(loc.paragraphIndex, topLevelParagraphs(doc).length);
+  const kids = childrenOf(target.node);
+  const pieces = paragraphPieces(target.node);
+
+  let insertAt;
+  let rPr = null;
+  const prev = loc.pos > 0 ? pieces.find((p) => p.start < loc.pos && loc.pos <= p.end) : null;
+  if (!prev) {
+    insertAt = tagOf(kids[0]) === 'w:pPr' ? 1 : 0;
+    const next = pieces.find((p) => p.splittable);
+    if (next) rPr = runProperties(kids[next.first]);
+  } else {
+    if (prev.splittable) rPr = runProperties(kids[prev.first]);
+    if (prev.splittable && loc.pos < prev.end) {
+      const [left, right] = splitRun(kids[prev.first], loc.pos - prev.start);
+      kids.splice(prev.first, 1, left, right);
+      insertAt = prev.first + 1;
+    } else {
+      insertAt = prev.last + 1;
+    }
+  }
+
+  const space = () => el('w:r', [...(rPr ? [structuredClone(rPr)] : []), textEl(' ')]);
+  kids.splice(insertAt, 0, ...(loc.spaceBefore ? [space()] : []), ...runs, ...(loc.spaceAfter ? [space()] : []));
 }
 
 /** Primer campo ADDIN ZOTERO_BIBL del documento (o null). */
@@ -573,6 +683,121 @@ function getBody(doc) {
     throw new Error(`El archivo no es un documento Word válido (${DOCUMENT_PART} no contiene w:document/w:body).`);
   }
   return childrenOf(body);
+}
+
+function noParagraph(index, count) {
+  return new Error(
+    `No existe el párrafo ${index} (el documento tiene ${count} párrafos). Usa zotero_read_docx para ver la estructura.`
+  );
+}
+
+/** Tipos de los w:fldChar de un nodo y sus descendientes, en orden. */
+function fieldCharTypes(node, out = []) {
+  for (const child of childrenOf(node)) {
+    if (tagOf(child) === 'w:fldChar') out.push(attr(child, 'w:fldCharType'));
+    else fieldCharTypes(child, out);
+  }
+  return out;
+}
+
+/**
+ * Trozos del texto visible de un párrafo, en orden: cada hijo directo del w:p, o
+ * un campo completo (de begin a end) como un solo trozo. Solo los runs de texto
+ * normales se pueden partir para insertar algo en medio.
+ * @returns {Array<{first: number, last: number, start: number, end: number, text: string,
+ *   splittable: boolean, zoteroCitation: boolean}>} first/last: índices en los hijos del w:p;
+ *   start/end: posición en el texto del párrafo.
+ */
+function paragraphPieces(pNode) {
+  const pieces = [];
+  let field = null;
+  let depth = 0;
+  let offset = 0;
+  childrenOf(pNode).forEach((node, i) => {
+    const text = collect(node, 'w:t').join('');
+    const types = fieldCharTypes(node);
+    const inField = depth > 0 || types.includes('begin');
+    for (const t of types) {
+      if (t === 'begin') depth++;
+      else if (t === 'end') depth = Math.max(0, depth - 1);
+    }
+    if (inField) {
+      if (!field) {
+        field = { first: i, last: i, start: offset, end: offset, text: '', splittable: false, instr: '' };
+        pieces.push(field);
+      }
+      field.last = i;
+      field.text += text;
+      field.instr += collect(node, 'w:instrText').join('');
+      field.end = field.start + field.text.length;
+      if (depth === 0) field = null;
+    } else {
+      pieces.push({ first: i, last: i, start: offset, end: offset + text.length, text, splittable: tagOf(node) === 'w:r' && text.length > 0 });
+    }
+    offset += text.length;
+  });
+  for (const p of pieces) {
+    p.zoteroCitation = Boolean(p.instr && /^\s*ADDIN ZOTERO_ITEM/.test(p.instr));
+    delete p.instr;
+  }
+  return pieces;
+}
+
+/**
+ * Posiciones de `needle` en `text`, sin distinguir espacios repetidos, espacios
+ * duros, comillas rectas/tipográficas ni guiones (el modelo copia el texto de
+ * zotero_read_docx y puede normalizarlo).
+ * @returns {Array<{start: number, end: number}>}
+ */
+function findText(text, needle) {
+  // Sustituciones de un carácter por otro: las posiciones no cambian.
+  const norm = (s) =>
+    s
+      .replace(/[‘’‚‛]/g, "'")
+      .replace(/[“”„‟«»]/g, '"')
+      .replace(/[–—]/g, '-');
+  const pattern = norm(needle)
+    .split(/\s+/)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  const re = new RegExp(pattern, 'g');
+  const out = [];
+  for (const m of norm(text).matchAll(re)) out.push({ start: m.index, end: m.index + m[0].length });
+  return out;
+}
+
+/** w:rPr de un run (o null). */
+function runProperties(run) {
+  return childrenOf(run).find((c) => tagOf(c) === 'w:rPr') || null;
+}
+
+/** Parte un run en dos por la posición `at` de su texto; ambos conservan el formato. */
+function splitRun(run, at) {
+  const rPr = runProperties(run);
+  const left = [];
+  const right = [];
+  let offset = 0;
+  for (const child of childrenOf(run)) {
+    if (child === rPr) continue;
+    if (tagOf(child) !== 'w:t') {
+      (offset < at ? left : right).push(child);
+      continue;
+    }
+    const s = textOf(child);
+    if (offset + s.length <= at) left.push(child);
+    else if (offset >= at) right.push(child);
+    else {
+      left.push(textEl(s.slice(0, at - offset)));
+      right.push(textEl(s.slice(at - offset)));
+    }
+    offset += s.length;
+  }
+  const make = (children) => {
+    const node = { 'w:r': [...(rPr ? [structuredClone(rPr)] : []), ...children] };
+    if (run[ATTRS]) node[ATTRS] = { ...run[ATTRS] };
+    return node;
+  };
+  return [make(left), make(right)];
 }
 
 function topLevelParagraphs(doc) {

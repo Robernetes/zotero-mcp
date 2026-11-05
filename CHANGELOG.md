@@ -12,6 +12,12 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
   Cursor, VS Code, Windsurf y Gemini CLI.
 - Los estilos y locales disponibles se leen de `src/csl/` y `src/locales/`: basta con
   copiar un `.csl` o un `locales-<código>.xml` y reiniciar el cliente MCP.
+- `zotero_insert_citation_docx` cita justo después de la frase que respalda la fuente
+  (`afterText`, un fragmento del texto del párrafo) y agrupa varias fuentes en una sola
+  cita (`keys`): "(Costin et al., 2016; Pang et al., 2021)". La respuesta incluye
+  `preview` con el texto alrededor de la cita.
+- La skill `zotero-research` explica cómo citar: junto a la afirmación que respalda cada
+  fuente, agrupando las de una misma idea y sin amontonar citas al final del párrafo.
 - `scripts/e2e.mjs` rechaza las llamadas con `apply: true` salvo con `--allow-write`,
   y explica el error cuando el JSON llega roto (Windows PowerShell 5.1).
 
@@ -24,6 +30,11 @@ Todos los cambios relevantes de zotero-mcp. El formato sigue
 
 ### Corregido
 
+- `zotero_insert_citation_docx` pegaba la cita detrás del punto y sin espacio
+  ("…del software.(Autor, 2020)"); ahora va antes de la puntuación que cierra la
+  frase y separada por un espacio: "…del software (Autor, 2020).". La numeración
+  (IEEE, Vancouver) tiene en cuenta las citas posteriores del mismo párrafo, y la vista
+  previa indica `documentPrefs: "se crearían"` en lugar de `"creadas"`.
 - El README en inglés indicaba que `createSection` crea `## Bibliography`; el encabezado
   es `## Bibliografía`. Los README también decían que bastaba con copiar un estilo a
   `src/csl/`, lo que no era cierto hasta este cambio.
